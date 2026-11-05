@@ -31,6 +31,6 @@ Build in this order. A feature starts only when the features it depends on are D
 | Gate | Hour | Result | Decision |
 | --- | --- | --- | --- |
 | 1inch recommendation: use the canonical router + Extruction, not a custom opcode | 0 (Nov 5) | Accepted | D-13 |
-| Mentor question: hook as Aqua taker on the canonical router inside `beforeSwap` | 1 | | |
+| Mentor question: hook as Aqua taker on the canonical router inside `beforeSwap` | 1 | 1inch: possible (Nov 5) | Proceed with F05; mechanics verified in F02 |
 | `test_F05_fullAquaFill` passes | 8 | | |
 | Any path moves real tokens on the fork | 12 | | |

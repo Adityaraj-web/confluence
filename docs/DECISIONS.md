@@ -13,6 +13,7 @@ One entry per decision. Status is Decided, Open or Superseded. Open items must b
 - Why: SwapVM's taker trait `useTransferFromAndAquaPush` makes the router pull the taker's input and push it into the maker's Aqua balance, so the hook needs no taker callback. This avoids the riskiest callback-inside-unlock path.
 - Verify against the swap-vm v1.0.2 source (the deployed router): which contract calls `transferFrom` on the taker, that the trait exists under that name, and that no rule requires the taker to be `tx.origin`. Priya's program must contain no `tx.origin`-based Controls guard.
 - Still the top risk after D-13: Extruction does not change who the taker is. Ask mentors at hour 1.
+- 1inch confirmed (Nov 5): a contract can be the taker, calling the router from inside another protocol's callback such as a v4 hook's beforeSwap. Still to verify in F02 from the v1.0.2 source: which address the router transferFroms, and any tx.origin or reentrancy restriction.
 
 ## D-03 Our router is AquaSwapVMRouter plus one instruction
 - Status: **Superseded by D-13 (Nov 5)**
@@ -24,6 +25,7 @@ One entry per decision. Status is Decided, Open or Superseded. Open items must b
 - Consequence: `swap(order, tokenIn, tokenOut, amount, takerTraitsAndData)` (5 arguments); opcode indices come from `AquaOpcodes._opcodes()` at that tag.
 - TS: `@1inch/swap-vm-sdk` 0.4.0 and `@1inch/aqua-sdk` 0.3.0, pinned exactly. They carry the canonical addresses. Do not take swap-vm-sdk 0.5.0 (released Nov 5, has breaking changes) unless an F-spec needs it and a DECISIONS entry says why.
 - F00 records the exact tag or commit `forge install` resolved, and the aqua version swap-vm v1.0.2 depends on.
+- 1inch confirmed (Nov 5): use the release, it is the audited version; main is experimental.
 
 ## D-05 Phase 1 takes the Aqua amount as a hint
 - Status: Decided
@@ -63,6 +65,7 @@ One entry per decision. Status is Decided, Open or Superseded. Open items must b
 - Why: 1inch recommended it. It removes our riskiest Aqua-side work (fork, opcode table, version drift, redeploy). It meets "official Aqua/SwapVM contracts" fully. It also makes the band a reusable module any maker can attach to any strategy with no redeploy.
 - Rules from 1inch's Extruction docs: the target must be non-upgradeable, and `quote()` and `swap()` must return identical amounts. We meet both with one stateless `view` function.
 - Consequences: ConfluenceRouter is deleted from the plan. F03 shrinks to one contract and its tests. D-03 superseded, D-11 closed.
+- 1inch confirmed (Nov 5): projects must use the official contracts, not their own swap-vm implementation.
 
 ## D-14 The band reads live pool state; quote/swap consistency holds within one transaction
 - Status: Decided (Nov 5)
