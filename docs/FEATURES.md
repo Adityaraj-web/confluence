@@ -4,7 +4,7 @@ Build in this order. A feature starts only when the features it depends on are D
 
 | ID | Feature | Owner | Depends on | Status | Gate / priority |
 | --- | --- | --- | --- | --- | --- |
-| F00 | Repo scaffold and dependencies | Both | — | Todo | Hour 0-1 |
+| F00 | Repo scaffold and dependencies | Both | — | Done | Hour 0-1 |
 | F01 | Fork test base and MockMUMB | T1 | F00 | Todo | Must |
 | F02 | Aqua baseline: ship and swap on the canonical router | T2 | F00, F01 | Todo | Must |
 | F03 | PoolPriceBand extruction (no router changes) | T2 | F02 | Todo | Must (1inch) |
@@ -31,6 +31,6 @@ Build in this order. A feature starts only when the features it depends on are D
 | Gate | Hour | Result | Decision |
 | --- | --- | --- | --- |
 | 1inch recommendation: use the canonical router + Extruction, not a custom opcode | 0 (Nov 5) | Accepted | D-13 |
-| Mentor question: hook as Aqua taker on the canonical router inside `beforeSwap` | 1 | | |
+| Mentor question: hook as Aqua taker on the canonical router inside `beforeSwap` | 1 | 1inch: possible (Nov 5) | Proceed with F05; mechanics verified in F02 |
 | `test_F05_fullAquaFill` passes | 8 | | |
 | Any path moves real tokens on the fork | 12 | | |
