@@ -1,0 +1,16 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+libs = ["lib"]
+solc_version = "0.8.30"
+evm_version = "cancun"
+via_ir = true
+optimizer = true
+optimizer_runs = 700
+
+# MAINNET_RPC_URL and FORK_BLOCK come from the repo-root .env. forge finds it by
+# searching parent directories from contracts/. FORK_BLOCK is read in tests with
+# vm.envUint, not set here.
+[rpc_endpoints]
+mainnet = "${MAINNET_RPC_URL}"
