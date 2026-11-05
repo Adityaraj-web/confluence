@@ -76,10 +76,10 @@ docs/                      specs and context
 ## Commands
 - Build and test (from `contracts/`): `forge build`, `forge test -vvv`
 - One test: `forge test --match-test <name> -vvv`
-- Fork tests read `MAINNET_RPC_URL` and `FORK_BLOCK` from `.env`.
-- Local chain: `anvil --fork-url $MAINNET_RPC_URL --fork-block-number $FORK_BLOCK`
-- Scripts: `pnpm --dir scripts <script>`; web app: `pnpm --dir web dev`
-- If F00 sets up different commands, update this section in the same commit.
+- Fork tests read `MAINNET_RPC_URL` and `FORK_BLOCK` from the root `.env`: forge finds it by searching parent directories from `contracts/`. Tests use `vm.envString` / `vm.envUint`; `foundry.toml` has `mainnet = "${MAINNET_RPC_URL}"`.
+- Local chain (from the repo root; anvil does not read `.env`): `set -a; source .env; set +a; anvil --fork-url $MAINNET_RPC_URL --fork-block-number $FORK_BLOCK`
+- Scripts: `pnpm --dir scripts <script>`; typecheck: `pnpm --dir scripts tsc --noEmit`; web app: `pnpm --dir web dev`, build: `pnpm --dir web build`
+- Install deps (pnpm 12 blocks build scripts): `scripts/pnpm-workspace.yaml` allows esbuild.
 
 ## Pinned facts (change only with a DECISIONS entry)
 - Chain: local anvil fork of Ethereum mainnet at `FORK_BLOCK` (chosen at kickoff, recorded as D-01).

@@ -26,6 +26,9 @@ One entry per decision. Status is Decided, Open or Superseded. Open items must b
 - TS: `@1inch/swap-vm-sdk` 0.4.0 and `@1inch/aqua-sdk` 0.3.0, pinned exactly. They carry the canonical addresses. Do not take swap-vm-sdk 0.5.0 (released Nov 5, has breaking changes) unless an F-spec needs it and a DECISIONS entry says why.
 - F00 records the exact tag or commit `forge install` resolved, and the aqua version swap-vm v1.0.2 depends on.
 - 1inch confirmed (Nov 5): use the release, it is the audited version; main is experimental.
+- F00 resolved (Nov 5), installed as submodules in `contracts/lib/`: swap-vm `v1.0.2` = `32c687c2b73101fc26549e48fa1ff8a4d73afbac`; aqua `0.1.0` = `b51f3b6e3c02fa5208e1429f0f14706b025d9dd6` (the version swap-vm's package.json depends on); solidity-utils `6.9.7`, OpenZeppelin `v5.4.0`, forge-std `v1.11.0` (all as swap-vm's package.json pins); v4-core `v4.0.0` = `e50237c43811bd9b526eff40f26772152a42daba`; v4-periphery `main` = `c6e4754dab11bd38c6f08ac51c3c868569e93d64`.
+- swap-vm v1.0.2 builds with `via_ir = true`, solc 0.8.30. We use the same in the default profile (`evm_version = cancun` for v4); v4 and swap-vm compile together under one remapping set. No vendoring was needed.
+- Note for F03: swap-vm has two interfaces in `src/instructions/Extruction.sol`: non-view `IExtruction.extruction` (swap) and `IStaticExtruction` (quote). One `view` function with the same signature satisfies both.
 
 ## D-05 Phase 1 takes the Aqua amount as a hint
 - Status: Decided
