@@ -43,7 +43,7 @@ contract F01ForkBaseTest is ForkBase {
 
     function test_F01_sortedPair() public view {
         (address c0, address c1) = sortedPair();
-        assertLt(c0, c1, "not sorted");
+        assertLt(uint160(c0), uint160(c1), "not sorted");
         assertTrue(
             (c0 == address(mumb) && c1 == USDC) || (c0 == USDC && c1 == address(mumb)),
             "pair is not MUMB/USDC"
