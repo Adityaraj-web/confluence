@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(forge build *)",
+      "Bash(forge test *)",
+      "Bash(forge fmt *)",
+      "Bash(forge script *)",
+      "Bash(cast *)",
+      "Bash(pnpm *)",
+      "Bash(make *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Bash(git push --force *)"
+    ]
+  }
+}
