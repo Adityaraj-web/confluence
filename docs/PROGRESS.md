@@ -33,3 +33,10 @@ Entry format:
 - Decisions: D-04 updated with resolved commits, via_ir note, Extruction/IStaticExtruction note.
 - Next: F01 (fork test base, MockMUMB, T1) and F02 (T2).
 - Open issues: none. RPC must be archive for block 26349400 (untested until F01).
+
+## 2026-11-05 · F01 · T1 · Done
+- Changed: contracts/src/mocks/MockMUMB.sol, contracts/test/base/ForkBase.t.sol, contracts/test/fork/F01ForkBase.t.sol.
+- Verified: `forge test --match-path test/fork/F01ForkBase.t.sol -vvv` -> 5 passed (officialContractsExist, routerBoundToAqua, actorsFunded, sortedPair, mintOnlyDeployer); `forge test` -> 6 passed incl. F00 smoke; no warnings in our files. Router `AQUA()` equals the Aqua registry; `eip712Domain()` reports name "1inch SwapVM v1.0", version "1.0.2". RPC forks FORK_BLOCK fine (archive OK).
+- Decisions: none.
+- Next: F04 (T1, pool, seed position, hook skeleton); F02 (T2) can now extend ForkBase.
+- Open issues: none.

@@ -5,7 +5,7 @@ Build in this order. A feature starts only when the features it depends on are D
 | ID | Feature | Owner | Depends on | Status | Gate / priority |
 | --- | --- | --- | --- | --- | --- |
 | F00 | Repo scaffold and dependencies | Both | — | Done | Hour 0-1 |
-| F01 | Fork test base and MockMUMB | T1 | F00 | Todo | Must |
+| F01 | Fork test base and MockMUMB | T1 | F00 | Done | Must |
 | F02 | Aqua baseline: ship and swap on the canonical router | T2 | F00, F01 | Todo | Must |
 | F03 | PoolPriceBand extruction (no router changes) | T2 | F02 | Todo | Must (1inch) |
 | F04 | Pool, seed position and hook skeleton (pool-only swaps) | T1 | F01 | Todo | Must |
