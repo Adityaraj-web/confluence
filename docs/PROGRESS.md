@@ -40,3 +40,10 @@ Entry format:
 - Decisions: none.
 - Next: F04 (T1, pool, seed position, hook skeleton); F02 (T2) can now extend ForkBase.
 - Open issues: none.
+
+## 2026-11-06 05:22 IST · F02 · T2 · Done
+- Changed: contracts/test/fork/F02AquaBaseline.t.sol, contracts/test/base/StrategyLib.sol, contracts/test/base/TakerHelper.sol, docs (DECISIONS, FEATURES, PROGRESS).
+- Verified: `forge test --match-path test/fork/F02AquaBaseline.t.sol -vvv` -> 4 passed (shipCreatesVirtualBalances, takerContractSwap, quoteMatchesSwap, noTxOriginRequirement) on the deployed router; `forge test` -> 10 passed. 1,000 USDC in fills 987.158034397061298850 MUMB. No warnings in our files; importing swap-vm's `ProgramBuilder` adds one warning located in that lib file.
+- Decisions: D-02 and D-04 updated with the [VERIFY] answers; D-15 added. Takers approve the router, not Aqua. Flat-fee scale is 1e9 = 100%.
+- Next: F03 (T2). Read D-15 first: the band sees the net-of-fee input, and ARCHITECTURE section 3 step 7 and section 5 need correcting there. Hour-8 gate: the token path from a contract taker works; running inside `beforeSwap` is still unproven until F05.
+- Open issues: ARCHITECTURE still carries its [VERIFY in F02] tags; D-02 and D-04 hold the answers.
