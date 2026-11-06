@@ -5,6 +5,7 @@ import {ISwapVM} from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import {AquaOpcodes} from "@1inch/swap-vm/src/opcodes/AquaOpcodes.sol";
 import {XYCSwap} from "@1inch/swap-vm/src/instructions/XYCSwap.sol";
 import {Fee, FeeArgsBuilder} from "@1inch/swap-vm/src/instructions/Fee.sol";
+import {Extruction} from "@1inch/swap-vm/src/instructions/Extruction.sol";
 import {MakerTraitsLib} from "@1inch/swap-vm/src/libs/MakerTraits.sol";
 import {Program, ProgramBuilder} from "@1inch/swap-vm/test/utils/ProgramBuilder.sol";
 
@@ -25,6 +26,23 @@ abstract contract StrategyLib is AquaOpcodes {
         return bytes.concat(
             p.build(Fee._flatFeeAmountInXD, FeeArgsBuilder.buildFlatFee(feeE9)),
             p.build(XYCSwap._xycSwapXD)
+        );
+    }
+
+    /// @notice Flat input fee, the XYC curve, then the band check. The check runs inside the fee, so on exact input
+    ///         it sees the net-of-fee `amountIn` and the final `amountOut` (D-15).
+    /// @param target The deployed Extruction target.
+    /// @param bandArgs The target's args, from `PoolPriceBandExtruction.build`.
+    function _buildBandProgram(uint32 feeE9, address target, bytes memory bandArgs)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        Program memory p = ProgramBuilder.init(_opcodes());
+        return bytes.concat(
+            p.build(Fee._flatFeeAmountInXD, FeeArgsBuilder.buildFlatFee(feeE9)),
+            p.build(XYCSwap._xycSwapXD),
+            p.build(Extruction._extruction, abi.encodePacked(target, bandArgs))
         );
     }
 

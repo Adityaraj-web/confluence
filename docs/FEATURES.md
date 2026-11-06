@@ -7,7 +7,7 @@ Build in this order. A feature starts only when the features it depends on are D
 | F00 | Repo scaffold and dependencies | Both | — | Done | Hour 0-1 |
 | F01 | Fork test base and MockMUMB | T1 | F00 | Done | Must |
 | F02 | Aqua baseline: ship and swap on the canonical router | T2 | F00, F01 | Done | Must |
-| F03 | PoolPriceBand extruction (no router changes) | T2 | F02 | Todo | Must (1inch) |
+| F03 | PoolPriceBand extruction (no router changes) | T2 | F02 | Done | Must (1inch) |
 | F04 | Pool, seed position and hook skeleton (pool-only swaps) | T1 | F01 | Todo | Must |
 | F05 | Aqua leg inside the hook (phase 1, hint) | T1 + T2 | F03, F04 | Todo | **Hour-8 gate** |
 | F05-ALT | Router-level split fallback | T1 + T2 | F03, F04 | Todo | Only if F05 misses hour 8 |
