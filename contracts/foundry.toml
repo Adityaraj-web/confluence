@@ -12,5 +12,8 @@ optimizer_runs = 700
 # MAINNET_RPC_URL and FORK_BLOCK come from the repo-root .env. forge finds it by
 # searching parent directories from contracts/. FORK_BLOCK is read in tests with
 # vm.envUint, not set here.
+# Setup.s.sol (pulled forward from F09, D-21) writes ../deployments/local.json.
+fs_permissions = [{ access = "read-write", path = "../deployments" }]
+
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"

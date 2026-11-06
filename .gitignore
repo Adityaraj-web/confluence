@@ -2,3 +2,7 @@
 out/
 cache/
 node_modules/
+
+# Local run output (F07/F09): regenerate with the setup script
+contracts/broadcast/
+deployments/local.json

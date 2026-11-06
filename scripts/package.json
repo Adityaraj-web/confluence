@@ -3,7 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/quoter.test.ts",
+    "test:int": "node --env-file=../.env.example --env-file-if-exists=../.env --import tsx --test test/quoter.live.test.ts",
+    "abis": "tsx src/abis/generate.ts",
+    "quote": "tsx src/quoter.ts"
   },
   "dependencies": {
     "@1inch/aqua-sdk": "0.3.0",
