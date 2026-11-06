@@ -44,12 +44,30 @@ contract ConfluenceHook is IHooks {
     /// @dev A hook callback this contract does not implement.
     error HookNotImplemented();
 
+    // F06 skip reasons. These are never thrown: their encodings are the `reason` of `AquaSkipped` when the hook
+    // skips the Aqua leg before calling the router. A router revert is reported with the router's own revert data.
+
+    /// @dev Skip reason: the swap is exact output; phase 1 handles exact input only (D-08).
+    error ExactOutputNotSupported();
+    /// @dev Skip reason: the hint is larger than the swap's input amount.
+    error HintAboveAmount();
+    /// @dev Skip reason: the hint does not fit in an `int128`, the width of a `BeforeSwapDelta` half.
+    error HintTooLarge();
+    /// @dev Skip reason: the PoolManager holds less of the input token than the hint, so `take` would revert.
+    error PoolManagerShort(uint256 available);
+    /// @dev Skip reason: too little gas is left to run the router and still unwind and finish the swap.
+    error InsufficientGas(uint256 gasLeft);
+
     /// @notice A maker registered `orderHash` as the active order for `poolId`.
     event OrderRegistered(PoolId indexed poolId, address indexed maker, bytes32 orderHash);
     /// @notice A maker removed the active order for `poolId`.
     event OrderUnregistered(PoolId indexed poolId, address indexed maker);
     /// @notice The Aqua leg of a swap: `amountIn` of the input went to the maker's strategy for `amountOut`.
     event AquaFill(PoolId indexed poolId, address indexed maker, uint256 amountIn, uint256 amountOut);
+    /// @notice The hook was asked for an Aqua leg (a non-zero 32-byte hint) and skipped it; the pool fills the whole
+    /// swap. `reason` is an ABI-encoded custom error: this contract's own skip reasons, or the router's revert data
+    /// (trimmed to a fixed length).
+    event AquaSkipped(PoolId indexed poolId, bytes reason);
 
     /// @notice The Uniswap v4 PoolManager this hook serves.
     IPoolManager public immutable poolManager;
