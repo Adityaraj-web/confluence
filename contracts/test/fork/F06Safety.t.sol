@@ -137,7 +137,7 @@ contract F06SafetyTest is ConfluenceBase {
             -int256(SWAP_USDC),
             _hint(SWAP_USDC),
             SafeERC20.SafeTransferFromFailed.selector,
-            ""
+            abi.encodeWithSelector(SafeERC20.SafeTransferFromFailed.selector)
         );
     }
 
@@ -171,7 +171,7 @@ contract F06SafetyTest is ConfluenceBase {
             -int256(SWAP_USDC),
             _hint(SWAP_USDC),
             SafeERC20.SafeTransferFromFailed.selector,
-            ""
+            abi.encodeWithSelector(SafeERC20.SafeTransferFromFailed.selector)
         );
     }
 
@@ -308,6 +308,10 @@ contract F06SafetyTest is ConfluenceBase {
             if (_isGasSkip(skips)) lo = mid;
             else hi = mid;
         }
+
+        emit log_named_uint("highest tx gas limit at which the hook skips Aqua (InsufficientGas)", lo);
+        emit log_named_uint("lowest tx gas limit at which the hook tries Aqua", hi);
+        emit log_named_uint("lowest tx gas limit at which Aqua fills", _lowestFillLimit(hi, 700_000));
 
         // At `lo`: skipped with InsufficientGas, one gas under the threshold, and the pool-only result.
         uint256 snap = vm.snapshotState();
@@ -558,6 +562,18 @@ contract F06SafetyTest is ConfluenceBase {
         vm.revertToState(snap);
         skips = _skips(logs);
         (filled,,) = _findAquaFill(logs);
+    }
+
+    /// @dev The lowest limit in `(lo, hi]` at which the hinted swap fills, by bisection; `hi` must fill and the
+    /// fill must be monotone in the limit.
+    function _lowestFillLimit(uint256 lo, uint256 hi) internal returns (uint256) {
+        while (hi - lo > 1) {
+            uint256 mid = (lo + hi) / 2;
+            (,, bool filled) = _hintedAtLimit(mid);
+            if (filled) hi = mid;
+            else lo = mid;
+        }
+        return hi;
     }
 
     /// @dev True if the only skip is `InsufficientGas`.
