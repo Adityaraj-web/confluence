@@ -132,9 +132,13 @@ contract ConfluenceHook is IHooks {
     }
 
     /// @notice Register `order` as the active order for the pool `key`, replacing any earlier one.
-    /// @dev Only `order.maker` may call.
+    /// @dev Only `order.maker` may call. Reverts `OrderDataTooLarge` if `order.data` is longer than
+    /// `MAX_ORDER_DATA_BYTES`, so what `beforeSwap` loads on every hinted swap is bounded (D-20).
     function registerOrder(PoolKey calldata key, ISwapVM.Order calldata order) external {
         if (msg.sender != order.maker) revert NotMaker();
+        if (order.data.length > MAX_ORDER_DATA_BYTES) {
+            revert OrderDataTooLarge(order.data.length, MAX_ORDER_DATA_BYTES);
+        }
         PoolId id = key.toId();
         _orders[id] = order;
         emit OrderRegistered(id, order.maker, keccak256(abi.encode(order)));
