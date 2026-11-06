@@ -40,10 +40,8 @@ import { encodeAbiParameters, keccak256 } from "viem";
 import { confluenceHookAbi } from "../src/abis/ConfluenceHook.js";
 import { poolPriceBandExtructionAbi } from "../src/abis/PoolPriceBandExtruction.js";
 import { loadDeployment } from "../src/config.js";
-import { FEE_0_30_PCT, buildBandArgs, buildBandProgram, buildOrderEncoded } from "../src/strategy.js";
+import { buildBandArgs, buildBandProgram, buildOrderEncoded } from "../src/strategy.js";
 
-const POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90" as const;
-const BAND_BPS = 200; // Setup.s.sol BAND_BPS
 
 const poolKeyAbi = [
   {
@@ -61,9 +59,9 @@ const poolKeyAbi = [
 test("test_F09_live_bandArgsEqualContractBuild", async () => {
   const d = loadDeployment();
   const args: ContractFunctionArgs<typeof poolPriceBandExtructionAbi, "pure", "build"> = [
-    POOL_MANAGER,
+    d.poolManager,
     d.poolKey,
-    BAND_BPS,
+    d.bandBps,
   ];
   const onChain = await client.readContract({
     address: d.band,
@@ -71,7 +69,7 @@ test("test_F09_live_bandArgsEqualContractBuild", async () => {
     functionName: "build",
     args,
   });
-  assert.equal(buildBandArgs(POOL_MANAGER, d.poolKey, BAND_BPS), onChain);
+  assert.equal(buildBandArgs(d.poolManager, d.poolKey, d.bandBps), onChain);
 });
 
 test("test_F09_live_tsOrderEqualsRegisteredOrder", async () => {
@@ -85,8 +83,8 @@ test("test_F09_live_tsOrderEqualsRegisteredOrder", async () => {
   });
   assert.equal(registered.maker.toLowerCase(), d.maker.toLowerCase(), "an order is registered for Priya");
 
-  const bandArgs = buildBandArgs(POOL_MANAGER, d.poolKey, BAND_BPS);
-  const tsOrder = buildOrderEncoded(d.maker, buildBandProgram(FEE_0_30_PCT, d.band, bandArgs));
+  const bandArgs = buildBandArgs(d.poolManager, d.poolKey, d.bandBps);
+  const tsOrder = buildOrderEncoded(d.maker, buildBandProgram(BigInt(d.feeE9), d.band, bandArgs));
 
   const registeredEncoded = encodeAbiParameters(
     [{ type: "tuple", components: [{ name: "maker", type: "address" }, { name: "traits", type: "uint256" }, { name: "data", type: "bytes" }] }],
@@ -95,5 +93,28 @@ test("test_F09_live_tsOrderEqualsRegisteredOrder", async () => {
   console.log(`# registered traits ${registered.traits}, data ${registered.data.length / 2 - 1} bytes`);
   assert.equal(tsOrder, registeredEncoded);
   // Aqua keys a strategy by keccak256 of the order, so equal bytes mean the same strategy hash.
-  assert.equal(keccak256(tsOrder), d.strategyHash);
+  assert.equal(keccak256(tsOrder), d.expectedStrategyHash);
+});
+
+// ---- step 3: what Setup.s.sol writes for shipStrategy.ts and the demo ----
+
+test("test_F09_live_localJsonCarriesTheShipInputs", async () => {
+  const d = loadDeployment();
+  const registered = await client.readContract({
+    address: d.hook,
+    abi: confluenceHookAbi,
+    functionName: "orderOf",
+    args: [keccak256(encodeAbiParameters(poolKeyAbi, [d.poolKey]))],
+  });
+  const registeredEncoded = encodeAbiParameters(
+    [{ type: "tuple", components: [{ name: "maker", type: "address" }, { name: "traits", type: "uint256" }, { name: "data", type: "bytes" }] }],
+    [registered],
+  );
+  assert.equal(d.orderHex, registeredEncoded, "orderHex is the registered order");
+  assert.equal(d.expectedStrategyHash, keccak256(d.orderHex));
+  assert.equal(d.bandBps, 200);
+  assert.equal(d.feeE9, 3_000_000);
+  assert.equal(d.swapVmRouter.toLowerCase(), "0x111111338c5091e8440b67b168bae16a668ac0de");
+  assert.equal(d.aqua.toLowerCase(), "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a");
+  assert.equal(d.poolManager.toLowerCase(), "0x000000000004444c5dc75cb358380d2e3de08a90");
 });

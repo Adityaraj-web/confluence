@@ -35,8 +35,19 @@ export interface Deployment {
   poolKey: PoolKeyJson;
   /** PoolPriceBandExtruction, the Extruction target in Priya's program. */
   band: Address;
-  /** Aqua strategy hash of the order Setup built (keccak256 of the ABI-encoded order). */
-  strategyHash: Hex;
+  /** The Aqua registry. */
+  aqua: Address;
+  /** The canonical AquaSwapVMRouter v1.0.2: the Aqua `app` Priya ships to. */
+  swapVmRouter: Address;
+  poolManager: Address;
+  /** abi.encode(Order) of the order Setup registered in the hook; shipStrategy.ts must rebuild exactly these bytes. */
+  orderHex: Hex;
+  /** keccak256(orderHex): the Aqua strategy hash the ship must produce. */
+  expectedStrategyHash: Hex;
+  /** Band width in basis points, as in the registered order's Extruction args. */
+  bandBps: number;
+  /** Priya's flat fee on the 1e9 scale (3000000 = 0.30%). */
+  feeE9: number;
   /** Priya, the maker. */
   maker: Address;
   /** The trader the quoter simulates as. */
