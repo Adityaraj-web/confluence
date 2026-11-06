@@ -111,6 +111,8 @@ contract ConfluenceHandler is Test, StrategyLib {
     /// Priya's price (the share the PROGRESS entry reports).
     uint256 public swapCalls;
     uint256 public swapCallsInBand;
+    /// @notice Times Priya docked and re-shipped.
+    uint256 public redocks;
     /// @notice The revert data of the latest skip that was not a band skip, for the run's log.
     bytes public lastOtherReason;
     /// @notice The revert data of every non-band skip, in order, for the run's log.
@@ -186,8 +188,29 @@ contract ConfluenceHandler is Test, StrategyLib {
         if (inBand) swapCallsInBand++;
     }
 
-    /// @notice Priya docks the live strategy and ships a new one at the pool's current price. Step 3.
-    function priyaRedock(uint256 sizeSeed, uint256 modeSeed) external {}
+    /// @notice Priya docks the live strategy and ships a new one with 10,000 to 100,000 MUMB. Three times in four
+    /// the USDC amount is MUMB times the pool's current price, so her curve starts at the pool's price (a maker who
+    /// re-ships to where the market is, D-22); one time in four it is the anchor price, 1 MUMB = 1 USDC, which is
+    /// stale once the pool has moved, so her fills are refused by the band until the pool comes back. A random
+    /// USDC amount would put her curve far outside the band and Aqua would be skipped for the rest of the run.
+    function priyaRedock(uint256 sizeSeed, uint256 modeSeed) external {
+        uint256 mumbAmount = bound(sizeSeed, 10_000, 100_000) * 1e18;
+        uint256 usdcAmount;
+        if (modeSeed % 4 == 0) {
+            usdcAmount = mumbAmount / 1e12;
+        } else {
+            (uint160 s0,,,) = manager.getSlot0(_key.toId());
+            uint256 poolX96 = FullMath.mulDiv(s0, s0, Q96);
+            // The pool price is currency1 per currency0, raw: USDC per MUMB when MUMB is currency0, else MUMB per USDC.
+            usdcAmount = usdcIsCurrency0
+                ? FullMath.mulDiv(mumbAmount, Q96, poolX96)
+                : FullMath.mulDiv(mumbAmount, poolX96, Q96);
+        }
+        if (usdcAmount == 0) return;
+        // The salt is the number of strategies so far: unique, so `ship` never sees a hash it has seen.
+        shipSalted(uint64(_strategies.length), mumbAmount, usdcAmount);
+        redocks++;
+    }
 
     /// @notice One trader swap with explicit inputs: `hint` of 0 is pool-only, otherwise the Aqua amount in
     /// `hookData`. The fuzzed `traderSwap` maps its seeds to this; the deterministic reachability test calls it

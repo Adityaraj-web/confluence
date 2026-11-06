@@ -98,7 +98,9 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
         _addToTotal("F08_TOTAL_FILLS", handler.fills());
         _addToTotal("F08_TOTAL_BAND_SKIPS", handler.bandSkips());
         _addToTotal("F08_TOTAL_OTHER_SKIPS", handler.otherSkips());
+        _addToTotal("F08_TOTAL_REDOCKS", handler.redocks());
         _tallyOtherSkips();
+        emit log_named_uint("F08 TOTAL redocks", vm.envOr("F08_TOTAL_REDOCKS", uint256(0)));
         emit log_named_uint("F08 TOTAL runs", vm.envOr("F08_TOTAL_RUNS", uint256(0)));
         emit log_named_uint("F08 TOTAL swap calls", vm.envOr("F08_TOTAL_SWAP_CALLS", uint256(0)));
         emit log_named_uint("F08 TOTAL swap calls inside the band", vm.envOr("F08_TOTAL_IN_BAND", uint256(0)));
