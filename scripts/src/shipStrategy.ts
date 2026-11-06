@@ -66,7 +66,7 @@ const orderTuple = [
   },
 ] as const;
 
-const poolKeyTuple = [
+export const poolKeyTuple = [
   {
     type: "tuple",
     components: [
