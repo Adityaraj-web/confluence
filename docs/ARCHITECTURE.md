@@ -51,7 +51,7 @@ Addresses (keep in sync with `.env`):
 6. Hook calls the canonical router's `swap(order, tokenIn, tokenOut, a, takerTraitsAndData)` inside try/catch (the 5-argument v1.0.2 signature, D-04), with taker traits: exact input, `useTransferFromAndAquaPush = true`, `threshold` = minimum MUMB out, recipient = hook.
 7. The router runs Priya's program. The flat fee takes its cut and runs the rest of the program inside itself, so the curve computes `b` from `a` net of the fee. The Extruction step then calls `PoolPriceBandExtruction.extruction(...)`, which reads the pool's `sqrtPriceX96` and reverts if the execution price, net input over `b`, is outside the band (D-15). If it passes, Aqua pulls `b` MUMB from Priya's wallet to the hook; the router pulls `a` USDC from the hook and pushes it into Priya's Aqua balance.
 8. Hook settles `b` MUMB into the PoolManager (`sync`, transfer, `settle`).
-9. Hook returns `BeforeSwapDelta(specified = +a, unspecified = -b)`: "I consumed `a` of the input and provided `b` of the output." Sign convention checked against v4's custom-curve hook in F04 (D-17); the partial-fill case is first exercised in F05.
+9. Hook returns `BeforeSwapDelta(specified = +a, unspecified = -b)`: "I consumed `a` of the input and provided `b` of the output." Sign convention checked against v4's custom-curve hook in F04 (D-17); the partial-fill case is exercised by `test_F05_partialSplit` and `test_F05_reverseDirection` (D-19).
 10. Pool curve swaps the remaining `1,000 - a` USDC against the seed position.
 11. Swap router settles with the PoolManager; trader receives the total MUMB; PoolManager checks all deltas are zero.
 
