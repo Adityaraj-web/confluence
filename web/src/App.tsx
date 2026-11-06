@@ -9,6 +9,7 @@ import type { DataSource, Header, Phase, RunsIndex } from "./lib/types.ts";
 import type { LiveSource } from "./lib/sources/live.ts";
 import { useKeys } from "./hooks/useKeys.ts";
 import { connect } from "./source.ts";
+import { Depth } from "./screens/Depth.tsx";
 import { Placeholder } from "./screens/Placeholder.tsx";
 import { Swap, type SwapResult } from "./screens/Swap.tsx";
 
@@ -85,7 +86,7 @@ export default function App() {
       if (n <= 3) setTab(n as TabId);
     },
     () => {
-      if (tab === 1) void run("both");
+      if (tab === 1 || tab === 2) void run("both");
     },
   );
 
@@ -117,6 +118,7 @@ export default function App() {
               free={free}
               valid={valid}
               phase={phase}
+              locked={!source}
               onRun={(v) => void run(v)}
             />
             <div className="min-w-0 flex-1">
@@ -124,7 +126,11 @@ export default function App() {
             </div>
           </>
         )}
-        {tab === 2 && <Placeholder name="Depth" />}
+        {tab === 2 && (
+          <div className="min-w-0 flex-1">
+            <Depth file={result?.file ?? null} header={header} running={phase !== null} disabled={!source} onRun={() => void run("both")} />
+          </div>
+        )}
         {tab === 3 && <Placeholder name="Guard" />}
       </main>
       <Toasts items={toasts} />
