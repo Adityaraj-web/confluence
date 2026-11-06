@@ -50,6 +50,8 @@ contract F04PoolSkeletonTest is PoolBase {
     function test_F04_poolOnlySwap() public {
         (uint256 mumbBefore, uint256 usdcBefore) = balances(trader);
 
+        // The PoolManager must really call the hook, or "zero delta" would pass for a hook that never ran.
+        vm.expectCall(address(hook), abi.encodeWithSelector(IHooks.beforeSwap.selector), 1);
         BalanceDelta d = _swapExactIn(trader, usdcForMumb(), TRADE_USDC, "");
 
         (uint256 mumbAfter, uint256 usdcAfter) = balances(trader);
