@@ -12,6 +12,7 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 
+import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {PoolPriceBandExtruction} from "../../src/PoolPriceBandExtruction.sol";
 import {PoolBase} from "./PoolBase.t.sol";
 import {StrategyLib} from "./StrategyLib.sol";
@@ -24,10 +25,6 @@ abstract contract ConfluenceBase is PoolBase, StrategyLib {
     uint256 internal constant SHIPPED_MUMB = 100_000e18;
     uint256 internal constant SHIPPED_USDC = 100_000e6;
     uint16 internal constant BAND_BPS = 200;
-
-    /// @dev Local copy of the hook's `AquaFill` event (ARCHITECTURE section 6) so the tests compile before the hook
-    /// declares it. Topics and data are identical; stage B swaps this for `ConfluenceHook.AquaFill`.
-    event AquaFill(PoolId indexed poolId, address indexed maker, uint256 amountIn, uint256 amountOut);
 
     error NoPoolSwapEvent();
 
@@ -140,7 +137,7 @@ abstract contract ConfluenceBase is PoolBase, StrategyLib {
         returns (bool found, uint256 amountIn, uint256 amountOut)
     {
         for (uint256 i; i < logs.length; i++) {
-            if (logs[i].emitter == address(hook) && logs[i].topics[0] == AquaFill.selector) {
+            if (logs[i].emitter == address(hook) && logs[i].topics[0] == ConfluenceHook.AquaFill.selector) {
                 (amountIn, amountOut) = abi.decode(logs[i].data, (uint256, uint256));
                 return (true, amountIn, amountOut);
             }

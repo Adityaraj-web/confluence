@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ISwapVM} from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 
+import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {ConfluenceBase} from "../base/ConfluenceBase.t.sol";
 
 /// @notice F05: the hook fills the hinted part of an exact-input swap from Priya's Aqua strategy inside
@@ -27,16 +28,19 @@ contract F05AquaLegTest is ConfluenceBase {
     function test_F05_fullAquaFill() public {
         Snap memory b = _snap();
 
-        vm.expectEmit(true, true, false, true, address(hook));
-        emit AquaFill(poolId, priya, SWAP_USDC, FULL_FILL_MUMB_OUT);
-        BalanceDelta d = _swapExactIn(trader, usdcForMumb(), SWAP_USDC, _hint(SWAP_USDC));
+        (int128 mumbDelta, int128 usdcDelta, Vm.Log[] memory logs) =
+            _swapWithLogs(usdcForMumb(), SWAP_USDC, _hint(SWAP_USDC));
 
         Snap memory a = _snap();
+        (bool found, uint256 fillIn, uint256 fillOut) = _findAquaFill(logs);
+        assertTrue(found, "AquaFill emitted");
+        assertEq(fillIn, SWAP_USDC, "AquaFill amountIn");
+        assertEq(fillOut, FULL_FILL_MUMB_OUT, "AquaFill amountOut");
         // Trader: pays exactly 1,000 USDC, gets Priya's fill and nothing from the pool.
         assertEq(a.traderUsdc, b.traderUsdc - SWAP_USDC, "trader USDC");
         assertEq(a.traderMumb, b.traderMumb + FULL_FILL_MUMB_OUT, "trader MUMB");
-        assertEq(int256(mumbAmount(d)), int256(FULL_FILL_MUMB_OUT), "delta MUMB");
-        assertEq(int256(usdcAmount(d)), -int256(SWAP_USDC), "delta USDC");
+        assertEq(int256(mumbDelta), int256(FULL_FILL_MUMB_OUT), "delta MUMB");
+        assertEq(int256(usdcDelta), -int256(SWAP_USDC), "delta USDC");
         // Priya's wallet: MUMB down by the same amount, USDC pushed in.
         assertEq(a.priyaMumb, b.priyaMumb - FULL_FILL_MUMB_OUT, "Priya wallet MUMB");
         assertEq(a.priyaUsdc, b.priyaUsdc + SWAP_USDC, "Priya wallet USDC");
