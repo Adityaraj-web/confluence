@@ -1,0 +1,10 @@
+{
+  // Typechecks web/test, which imports the ORIGINALS in ../scripts/src (they use constructor parameter
+  // properties, so erasableSyntaxOnly is off here). Not part of `tsc -b`; run: pnpm run typecheck:test
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "erasableSyntaxOnly": false
+  },
+  "include": ["test"]
+}

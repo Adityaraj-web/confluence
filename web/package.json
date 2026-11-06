@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --import tsx --test test/format.test.ts test/decode.test.ts test/quoter.test.ts test/engine.test.ts"
+    "test": "node --import tsx --test test/format.test.ts test/decode.test.ts test/quoter.test.ts test/engine.test.ts",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
     "react": "^19.3.1",
