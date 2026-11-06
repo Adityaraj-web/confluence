@@ -57,9 +57,9 @@ contract F04PoolSkeletonTest is PoolBase {
         assertEq(int128(-int256(TRADE_USDC)), usdcAmount(d), "delta USDC");
         assertGt(mumbAfter - mumbBefore, 0, "trader got MUMB");
         assertEq(int256(mumbAfter - mumbBefore), int256(mumbAmount(d)), "trader MUMB equals swap delta");
-        // 1,000 USDC at about 1 MUMB each, less the 0.30% fee and price impact on a thin seed.
-        assertGt(mumbAfter - mumbBefore, 950e18, "output above 95% of par");
-        assertLt(mumbAfter - mumbBefore, 1_000e18, "output below par");
+        // Exact for this fork block, with USDC as currency0 and the 2,500 + 2,500 seed over +/-600 ticks:
+        // 1,000 USDC buys 984.93 MUMB (0.30% fee plus price impact on a thin seed).
+        assertEq(mumbAfter - mumbBefore, 984_934_194_542_570_551_127, "trader MUMB received");
 
         _assertHookHoldsNothing();
 
@@ -97,8 +97,8 @@ contract F04PoolSkeletonTest is PoolBase {
         assertEq(int256(mumbAmount(d)), int256(500e18), "delta MUMB");
         uint256 spent = usdcBefore - usdcAfter;
         assertEq(int256(usdcAmount(d)), -int256(spent), "delta USDC");
-        assertGt(spent, 500e6, "paid more than par");
-        assertLt(spent, 520e6, "paid under 4% over par");
+        // Exact for this fork block and seed (see test_F04_poolOnlySwap): 500 MUMB costs 504.604610 USDC.
+        assertEq(spent, 504_604_610, "trader USDC spent");
 
         _assertHookHoldsNothing();
     }
