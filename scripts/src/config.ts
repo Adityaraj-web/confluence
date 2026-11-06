@@ -1,0 +1,56 @@
+// Shared script config. Addresses come from deployments/local.json (written by the
+// setup script) and the RPC URL from the environment; nothing is inlined here.
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { Address } from "viem";
+
+/**
+ * Gas limit for every swap transaction and every simulation of one (ARCHITECTURE
+ * section 7, D-20). The hook skips Aqua below a limit of about 396,525 and a fill needs
+ * about 458,300, so a simulation at any other limit can show a different split from the
+ * transaction. The demo runner (F09) and the web app (F10) must use this same value.
+ */
+export const SWAP_GAS_LIMIT = 1_500_000n;
+
+export const USDC_DECIMALS = 6;
+export const MUMB_DECIMALS = 18;
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+export interface PoolKeyJson {
+  currency0: Address;
+  currency1: Address;
+  fee: number;
+  tickSpacing: number;
+  hooks: Address;
+}
+
+export interface Deployment {
+  usdc: Address;
+  mumb: Address;
+  hook: Address;
+  /** The swap router the trader uses (v4-core PoolSwapTest in the local demo). */
+  swapRouter: Address;
+  poolKey: PoolKeyJson;
+  /** Priya, the maker. */
+  maker: Address;
+  /** The trader the quoter simulates as. */
+  trader: Address;
+  /** anvil snapshot id taken after setup (F09). */
+  snapshotId?: string;
+}
+
+export const DEPLOYMENT_PATH = resolve(root, "deployments/local.json");
+
+export function loadDeployment(path: string = DEPLOYMENT_PATH): Deployment {
+  if (!existsSync(path)) {
+    throw new Error(`${path} not found: run the setup script first (F09)`);
+  }
+  return JSON.parse(readFileSync(path, "utf8")) as Deployment;
+}
+
+/** The local anvil node. Not a secret, so it has a default. */
+export function rpcUrl(): string {
+  return process.env.ANVIL_RPC_URL ?? "http://127.0.0.1:8545";
+}
