@@ -46,15 +46,25 @@ test("test_F09_programLayout", () => {
   assert.equal(hexToBytes(program).length, 6 + 2 + 2 + 108);
 });
 
-test("test_F09_orderEncodingShape", () => {
+test("test_F09_orderEncodingExactBytes", () => {
   const args = buildBandArgs(POOL_MANAGER, KEY, 200);
   const program = buildBandProgram(FEE_0_30_PCT, BAND, args);
-  const order = buildOrderEncoded(MAKER, program);
-  // abi.encode(Order{maker, traits, data}); with no hooks, data is the program itself. Byte equality with
-  // the order StrategyLib built is checked live (test_F09_live_tsOrderEqualsRegisteredOrder).
-  assert.ok(strip(order).includes(strip(program)), "the program is the order's data");
-  assert.ok(strip(order).includes(strip(MAKER)), "the maker is in the order");
-  assert.equal(keccak256(order).length, 66);
+  // abi.encode(Order{maker, traits, data}), built here with viem and not with the SDK. With no hooks and no
+  // receiver, data is the program itself; Aqua mode sets only bit 254 of traits (live: traits == 2^254).
+  const expected = encodeAbiParameters(
+    [
+      {
+        type: "tuple",
+        components: [
+          { name: "maker", type: "address" },
+          { name: "traits", type: "uint256" },
+          { name: "data", type: "bytes" },
+        ],
+      },
+    ],
+    [{ maker: MAKER, traits: 1n << 254n, data: program }],
+  );
+  assert.equal(buildOrderEncoded(MAKER, program), expected);
 });
 
 import { assertSameBytes, firstByteDifference } from "../src/shipStrategy.js";
@@ -192,7 +202,7 @@ test("test_F09_formatTable", () => {
   // The price is sqrtPrice squared: 1000^2 -> 1010^2 is a 2.01% move, 1000^2 -> 1005^2 is 1.00%.
   assert.match(t, /pool price move \(slot0\)\s+2\.01%\s+1\.00%/);
   assert.doesNotMatch(t, /liquidity/, "liquidity stays in last-demo.json only");
-  assert.match(t, /gain vs pool only: \+6\.615628773098680634 MUMB \(\+67\.\d\d bps\)/);
+  assert.match(t, /gain vs pool only: \+6\.615628773098680634 MUMB \(\+67\.16 bps\)/);
   // The table is a pure function of its inputs: same records, same text.
   assert.equal(formatTable(poolOnly, split), t);
 });

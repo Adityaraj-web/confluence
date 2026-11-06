@@ -140,3 +140,39 @@ test("test_F09_live_priyaIsShippedWithTheFullAmounts", async () => {
   assert.equal(mumbTokens, 2, "the strategy has two tokens");
   assert.equal(usdcTokens, 2, "the strategy has two tokens");
 });
+
+// ---- step 8: the acceptance line "make demo run twice in a row prints identical numbers" ----
+
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { LAST_DEMO_PATH } from "../src/demo.js";
+
+test("test_F09_live_twoDemoRunsAreByteIdentical", { timeout: 300_000 }, () => {
+  // Runs the real CLI twice. `run` consumes the saved snapshot and saves a new one at the deploy state, so no
+  // scratch snapshot is needed; a failed run restores it too (withRecovery). This must not run in parallel with
+  // another live test file: its reverts would discard their snapshots (test:int uses --test-concurrency=1).
+  const scripts = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const cli = (cmd: string) =>
+    execFileSync(
+      process.execPath,
+      ["--env-file=../.env.example", "--env-file-if-exists=../.env", "--import", "tsx", "src/demo.ts", cmd],
+      { cwd: scripts, encoding: "utf8" },
+    );
+
+  const firstStdout = cli("run");
+  const firstJson = readFileSync(LAST_DEMO_PATH, "utf8");
+  const secondStdout = cli("run");
+  const secondJson = readFileSync(LAST_DEMO_PATH, "utf8");
+
+  assert.equal(secondStdout, firstStdout, "the printed table and checks are identical");
+  assert.equal(secondJson, firstJson, "last-demo.json is byte-identical");
+
+  const run = JSON.parse(firstJson) as { poolOnly: { mumbOut: string }; confluence: { mumbOut: string } };
+  assert.ok(BigInt(run.confluence.mumbOut) > BigInt(run.poolOnly.mumbOut), "split beats pool-only");
+  assert.match(firstStdout, /wrote .*last-demo\.json/);
+
+  // The second run left a live saved snapshot at the deploy state: reset can use it.
+  assert.match(cli("reset"), /reverted to snapshot 0x[0-9a-f]+ \(block \d+\); new snapshot 0x[0-9a-f]+ saved/);
+});

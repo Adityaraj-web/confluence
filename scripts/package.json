@@ -5,7 +5,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/quoter.test.ts test/f09.test.ts",
-    "test:int": "node --env-file=../.env.example --env-file-if-exists=../.env --import tsx --test test/quoter.live.test.ts test/f09.live.test.ts",
+    "test:int": "node --env-file=../.env.example --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 test/quoter.live.test.ts test/f09.live.test.ts",
     "abis": "tsx src/abis/generate.ts",
     "quote": "tsx src/quoter.ts",
     "fork": "bash -c 'set -a; source ../.env; set +a; exec anvil --fork-url \"$MAINNET_RPC_URL\" --fork-block-number \"$FORK_BLOCK\"'",
