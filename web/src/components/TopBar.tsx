@@ -81,10 +81,11 @@ function Badge({ kind, block }: { kind: "live" | "replay" | null; block: number 
         aria-hidden="true"
         className={`size-8 rounded-full ${live ? "bg-ok" : "border border-muted"}`}
       />
-      <span className="font-medium">{live ? "LIVE" : "REPLAY"}</span>
-      <span className="text-muted">
+      <span className="text-muted tabular-nums">
+        <span className="font-medium text-fg">{live ? "LIVE" : "REPLAY"}</span>
+        {" · "}
         {live ? "anvil fork " : "recorded from a mainnet fork at block "}
-        <span className="font-mono tabular-nums">{block ?? "—"}</span>
+        {block ?? "—"}
       </span>
     </span>
   );

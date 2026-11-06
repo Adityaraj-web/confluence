@@ -125,7 +125,7 @@ export default function App() {
           Chain is not at the deploy state: run <code className="font-mono">pnpm --dir scripts run demo:reset</code>
         </Banner>
       )}
-      {!source && refused && <Banner tone="info">Live mode is off: {refused}</Banner>}
+      {!live && refused && <Banner tone="info">Live mode is off ({source ? "showing recorded runs" : "no data"}): {refused}</Banner>}
       <main className="flex min-h-0 flex-1">
         {tab === 1 && (
           <>

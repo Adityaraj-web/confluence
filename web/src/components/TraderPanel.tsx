@@ -31,7 +31,7 @@ export function TraderPanel(props: {
     <aside className="flex w-[280px] shrink-0 flex-col gap-24 border-r border-line p-24" aria-label="Trader">
       <div className="flex flex-col gap-8">
         <label htmlFor="amount" className="text-cap text-muted">
-          Trader pays
+          {free ? "Trader pays" : "Trader pays (USDC, recorded amounts)"}
         </label>
         {free ? (
           <div
@@ -52,11 +52,7 @@ export function TraderPanel(props: {
             />
             <span className="text-cap text-muted">USDC</span>
           </div>
-        ) : (
-          <p className="rounded-lg border border-line bg-surface px-16 py-16 font-mono text-big tabular-nums">
-            {group(amount)} <span className="text-cap text-muted">USDC</span>
-          </p>
-        )}
+        ) : null}
         <div className="flex gap-8">
           {presets.map((p) => (
             <button

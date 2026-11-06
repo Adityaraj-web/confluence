@@ -1,7 +1,8 @@
-// Chooses the data source. Dev server + a reachable anvil fork = live. Anything else = replay (added in step 6).
+// Chooses the data source. Dev server + a reachable anvil fork = live. Anything else = replay of the recorded runs.
 // A refusal is returned with its reason so the UI can show it; it never throws.
 import { loadJson } from "./lib/runs.ts";
 import { snapFromJson } from "./lib/engine.ts";
+import { createReplaySource } from "./lib/sources/replay.ts";
 import { createLiveSource, type LiveSource } from "./lib/sources/live.ts";
 import type { DataSource, DeploymentJson, RunFile, Snap } from "./lib/types.ts";
 
@@ -40,8 +41,10 @@ export async function connect(cb: { onToast: (m: string) => void; onBusy: (b: bo
       refused = e instanceof Error ? e.message : String(e);
     }
   } else {
-    refused = "this build has no chain to drive";
+    refused = null; // the static build is replay by design: nothing to explain
   }
-  // Step 6 replaces this with the replay source.
-  return { source: null, live: null, refused };
+  // Live is not available: replay the recorded runs. `refused` is kept so the UI can say why.
+  const rep = await createReplaySource();
+  if ("source" in rep) return { source: rep.source, live: null, refused };
+  return { source: null, live: null, refused: refused ? `${refused}; ${rep.refused}` : rep.refused };
 }
