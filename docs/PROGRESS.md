@@ -47,3 +47,10 @@ Entry format:
 - Decisions: D-02 and D-04 updated with the [VERIFY] answers; D-15 added. Takers approve the router, not Aqua. Flat-fee scale is 1e9 = 100%.
 - Next: F03 (T2). Read D-15 first: the band sees the net-of-fee input, and ARCHITECTURE section 3 step 7 and section 5 need correcting there. Hour-8 gate: the token path from a contract taker works; running inside `beforeSwap` is still unproven until F05.
 - Open issues: ARCHITECTURE still carries its [VERIFY in F02] tags; D-02 and D-04 hold the answers.
+
+## 2026-11-06 06:43 IST · F03 · T2 · In progress
+- Changed: contracts/src/PoolPriceBandExtruction.sol (skeleton, every function reverts), contracts/test/base/StrategyLib.sol (`_buildBandProgram`), contracts/test/unit/F03PoolPriceBand.t.sol, contracts/test/fork/F03BandOnFork.t.sol, docs/FEATURES.md.
+- Verified: `forge test --match-test test_F03` -> 17 failed, as intended, all at the skeleton's revert; `forge test --no-match-test test_F03` -> 10 passed.
+- Decisions: none recorded yet. Team approved `InvalidArgsLength`, `InvalidBand` in `build` as well as `parse`, and the ARCHITECTURE corrections; D-16 and the edits land when F03 is finished.
+- Next: implement the contract, checking in this order: parse and band validity, token match, `getSlot0`, not-computed, price maths, band check.
+- Open issues: the skeleton gives 4 temporary compiler warnings in our file; the implementation removes them.
