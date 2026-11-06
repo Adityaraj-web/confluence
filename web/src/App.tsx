@@ -5,12 +5,12 @@ import { TraderPanel, type RunView } from "./components/TraderPanel.tsx";
 import { DEMO_AMOUNT } from "./lib/constants.ts";
 import { loadIndex } from "./lib/runs.ts";
 import { amountInRaw } from "./lib/quoter.ts";
-import type { DataSource, Header, Phase, RunsIndex } from "./lib/types.ts";
+import type { DataSource, GuardFile, Header, Phase, RunsIndex } from "./lib/types.ts";
 import type { LiveSource } from "./lib/sources/live.ts";
 import { useKeys } from "./hooks/useKeys.ts";
 import { connect } from "./source.ts";
 import { Depth } from "./screens/Depth.tsx";
-import { Placeholder } from "./screens/Placeholder.tsx";
+import { Guard } from "./screens/Guard.tsx";
 import { Swap, type SwapResult } from "./screens/Swap.tsx";
 
 const AMOUNT_RE = /^\d+(\.\d{1,6})?$/;
@@ -25,6 +25,8 @@ export default function App() {
   const [amount, setAmount] = useState(DEMO_AMOUNT);
   const [phase, setPhase] = useState<Phase | null>(null);
   const [result, setResult] = useState<SwapResult | null>(null);
+  const [guard, setGuard] = useState<GuardFile | null>(null);
+  const [guardRunning, setGuardRunning] = useState(false);
   const [deployState, setDeployState] = useState<"ok" | "mismatch" | "unchecked">("unchecked");
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const toastId = useRef(0);
@@ -81,12 +83,28 @@ export default function App() {
     [source, phase, valid, amount, live, toast],
   );
 
+  // The guard uses the recorded guard amount (1,000 USDC), not the Swap amount: its move size was measured for it (D-23).
+  const guardAmount = index?.guard.amount ?? DEMO_AMOUNT;
+  const runGuard = useCallback(async () => {
+    if (!source || phase !== null || guardRunning) return;
+    setGuardRunning(true);
+    try {
+      setGuard(await source.guard(amountInRaw(guardAmount, "usdc-to-mumb")));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setGuardRunning(false);
+      if (live) setDeployState(live.deployState());
+    }
+  }, [source, phase, guardRunning, guardAmount, live, toast]);
+
   useKeys(
     (n) => {
       if (n <= 3) setTab(n as TabId);
     },
     () => {
       if (tab === 1 || tab === 2) void run("both");
+      else if (tab === 3) void runGuard();
     },
   );
 
@@ -118,7 +136,7 @@ export default function App() {
               free={free}
               valid={valid}
               phase={phase}
-              locked={!source}
+              locked={guardRunning || !source}
               onRun={(v) => void run(v)}
             />
             <div className="min-w-0 flex-1">
@@ -128,10 +146,14 @@ export default function App() {
         )}
         {tab === 2 && (
           <div className="min-w-0 flex-1">
-            <Depth file={result?.file ?? null} header={header} running={phase !== null} disabled={!source} onRun={() => void run("both")} />
+            <Depth file={result?.file ?? null} header={header} running={phase !== null || guardRunning} disabled={!source} onRun={() => void run("both")} />
           </div>
         )}
-        {tab === 3 && <Placeholder name="Guard" />}
+        {tab === 3 && (
+          <div className="min-w-0 flex-1">
+            <Guard guard={guard} running={guardRunning} locked={phase !== null || !source} onRun={() => void runGuard()} />
+          </div>
+        )}
       </main>
       <Toasts items={toasts} />
     </div>
