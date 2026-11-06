@@ -326,7 +326,7 @@ contract F03BandOnForkTest is ForkBase, StrategyLib {
         (, uint256 swappedOut,) = helper.swapExactIn(order, USDC, address(mumb), SWAP_USDC, 0, trader);
         (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(band));
 
-        // Guards against passing vacuously: the swap really ran through the band.
+        // The swap filled. That it ran through the band at all is what `test_F03_outOfBandReverts` proves.
         assertEq(swappedOut, EXPECTED_MUMB_OUT, "amountOut");
         assertEq(writes.length, 0, "band wrote storage");
         assertEq(reads.length, 0, "band read storage");
