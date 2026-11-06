@@ -33,8 +33,8 @@ contract GasBurnExtruction is IExtruction, IStaticExtruction {
     }
 }
 
-/// @notice Test-only Extruction target that reverts with 500,000 bytes of return data, starting `0xdeadbeef`.
-/// Not production code.
+/// @notice Test-only Extruction target that reverts with 500,000 bytes of return data. The first 256 bytes are
+/// `0xdeadbeef` padded to a word, then the words 1 to 7; the rest is whatever is in memory. Not production code.
 contract ReturnBombExtruction is IExtruction, IStaticExtruction {
     function extruction(bool, uint256, SwapQuery calldata, SwapRegisters calldata, bytes calldata, bytes calldata)
         external
@@ -42,8 +42,16 @@ contract ReturnBombExtruction is IExtruction, IStaticExtruction {
         override(IExtruction, IStaticExtruction)
         returns (uint256, uint256, SwapRegisters memory)
     {
-        assembly ("memory-safe") {
-            mstore(0, shl(224, 0xdeadbeef))
+        // Not "memory-safe": it overwrites the free memory pointer, which is fine because it reverts at once.
+        assembly {
+            mstore(0x00, shl(224, 0xdeadbeef))
+            mstore(0x20, 1)
+            mstore(0x40, 2)
+            mstore(0x60, 3)
+            mstore(0x80, 4)
+            mstore(0xa0, 5)
+            mstore(0xc0, 6)
+            mstore(0xe0, 7)
             revert(0, 500000)
         }
     }
@@ -233,7 +241,17 @@ contract F06SafetyTest is ConfluenceBase {
     function test_F06_returnBombFallsBack() public {
         _shipAndRegister(address(new ReturnBombExtruction()));
 
-        bytes memory expected = abi.encodePacked(bytes4(0xdeadbeef), new bytes(MAX_REASON_BYTES - 4));
+        bytes memory expected = abi.encodePacked(
+            bytes32(bytes4(0xdeadbeef)),
+            uint256(1),
+            uint256(2),
+            uint256(3),
+            uint256(4),
+            uint256(5),
+            uint256(6),
+            uint256(7)
+        );
+        assertEq(expected.length, MAX_REASON_BYTES, "precondition: expected is exactly the trimmed length");
         _assertFallsBack(
             "return bomb", usdcForMumb(), -int256(SWAP_USDC), _hint(SWAP_USDC), bytes4(0xdeadbeef), expected
         );

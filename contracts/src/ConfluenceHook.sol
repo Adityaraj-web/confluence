@@ -74,6 +74,9 @@ contract ConfluenceHook is IHooks {
     /// @notice The canonical AquaSwapVMRouter: the taker's counterparty and the contract that pulls the hook's input.
     address public immutable router;
 
+    /// @notice The most revert data of a failed router call that `AquaSkipped` carries.
+    uint256 public constant MAX_REASON_BYTES = 256;
+
     /// @dev One active maker order per pool (D-09).
     mapping(PoolId => ISwapVM.Order) internal _orders;
 
@@ -130,6 +133,12 @@ contract ConfluenceHook is IHooks {
     /// (`ExactOutputNotSupported`); the hint exceeds the swap amount (`HintAboveAmount`); the hint does not fit an
     /// `int128` (`HintTooLarge`); no order for the pool (`NoOrder`); the PoolManager holds less of the input token
     /// than the hint (`PoolManagerShort`, so `take` cannot revert).
+    /// Aqua can never make the swap fail: the router call is inside try/catch (see `_fill`). When it reverts, the
+    /// hook returns the input to the PoolManager, emits `AquaSkipped` with the router's revert data, and returns a
+    /// zero delta, so the pool fills the whole swap.
+    /// The one cast outside the try/catch is `b.toInt128()` after a successful router call. It is accepted: the band
+    /// holds `b` to roughly `a` times the pool price, and `a` is already capped at int128 max, so `b` overflows only
+    /// at an absurd pool price.
     function beforeSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
         external
         onlyPoolManager
@@ -153,7 +162,8 @@ contract ConfluenceHook is IHooks {
         uint256 available = (params.zeroForOne ? key.currency0 : key.currency1).balanceOf(address(poolManager));
         if (available < a) return _skipped(id, abi.encodeWithSelector(PoolManagerShort.selector, available));
 
-        uint256 b = _fill(key, params.zeroForOne, a, order);
+        (bool ok, uint256 b, bytes memory reason) = _fill(key, params.zeroForOne, a, order);
+        if (!ok) return _skipped(id, reason);
         // `b` is only known after the router call, and the PoolManager is locked against re-entry during it.
         // forge-lint: disable-next-line(reentrancy-events)
         emit AquaFill(id, order.maker, a, b);
@@ -169,15 +179,24 @@ contract ConfluenceHook is IHooks {
 
     /// @dev Report that the Aqua leg was skipped for `id`, then return the pool-only zero delta.
     function _skipped(PoolId id, bytes memory reason) private returns (bytes4, BeforeSwapDelta, uint24) {
+        // For a router failure the reason is only known after the call, and the PoolManager is locked against
+        // re-entry during it.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit AquaSkipped(id, reason);
         return _poolOnly();
     }
 
-    /// @dev Steps 4-8 of ARCHITECTURE section 3: take `a` of the input, pay the router for it, run Priya's order
-    /// with this hook as the taker, and settle the output the router sent here. `b` is the router's return value.
+    /// @dev Steps 4-8 of ARCHITECTURE section 3, with the unwind of F06: take `a` of the input, pay the router for
+    /// it, run Priya's order with this hook as the taker, and settle the output the router sent here. `b` is the
+    /// router's return value.
+    /// If the router call reverts for any reason (band breach, docked strategy, revoked approval, short wallet, lock
+    /// re-entry, out of gas), everything the router did is undone with it, so the hook holds exactly the `a` it took:
+    /// the approval is reset and `a` is settled back to the PoolManager, `ok` is false and `reason` is the router's
+    /// revert data, trimmed to `MAX_REASON_BYTES`. Only the router call is inside the try; a failure of the
+    /// settlement after it reverts the swap, as does a malformed router return.
     function _fill(PoolKey calldata key, bool zeroForOne, uint256 a, ISwapVM.Order memory order)
         private
-        returns (uint256 b)
+        returns (bool ok, uint256 b, bytes memory reason)
     {
         (Currency currencyIn, Currency currencyOut) =
             zeroForOne ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
@@ -188,11 +207,32 @@ contract ConfluenceHook is IHooks {
         // The router is what calls transferFrom on the taker (D-02), so it gets the approval, for exactly `a`.
         IERC20(tokenIn).forceApprove(router, a);
         // Only `b` is used: the router's own check makes the amount in equal `a` (TakerTraits.sol:179).
-        // forge-lint: disable-next-line(unused-return)
-        (, b,) = ISwapVM(router).swap(order, tokenIn, Currency.unwrap(currencyOut), a, _takerData());
+        try ISwapVM(router).swap(order, tokenIn, Currency.unwrap(currencyOut), a, _takerData()) returns (
+            uint256, uint256 amountOut, bytes32
+        ) {
+            ok = true;
+            b = amountOut;
+        } catch {
+            reason = _revertData();
+        }
         IERC20(tokenIn).forceApprove(router, 0);
 
-        currencyOut.settle(poolManager, address(this), b, false);
+        if (ok) currencyOut.settle(poolManager, address(this), b, false);
+        else currencyIn.settle(poolManager, address(this), a, false);
+    }
+
+    /// @dev The revert data of the call that just failed, at most `MAX_REASON_BYTES` of it. Copying only a bounded
+    /// prefix means a maker-chosen Extruction cannot use a huge revert to run the swap out of gas (`registerOrder`
+    /// accepts any maker, D-18). Must be called right after the failing call, before any other call.
+    function _revertData() private pure returns (bytes memory reason) {
+        uint256 n = MAX_REASON_BYTES;
+        assembly ("memory-safe") {
+            if lt(returndatasize(), n) { n := returndatasize() }
+        }
+        reason = new bytes(n);
+        assembly ("memory-safe") {
+            returndatacopy(add(reason, 0x20), 0, n)
+        }
     }
 
     /// @dev Taker data as in `TakerHelper`: this hook is the taker, exact input, the router pulls the input and
