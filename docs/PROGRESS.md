@@ -105,12 +105,13 @@ Entry format:
   pnpm --dir scripts install --frozen-lockfile
   (cd contracts && forge build)
 
-  # terminal 1: the fork (anvil does not read .env itself)
-  set -a; source .env; set +a; anvil --fork-url $MAINNET_RPC_URL --fork-block-number $FORK_BLOCK
+  # terminal 1: a FRESH fork (the `fork` target sources .env for anvil; it keeps running)
+  pnpm --dir scripts run fork
 
-  # terminal 2: setup once per fresh anvil (writes deployments/local.json)
-  set -a; source .env.example; source .env; set +a
-  (cd contracts && forge script script/Setup.s.sol --rpc-url http://127.0.0.1:8545 --broadcast)
+  # terminal 2: deploy once per fresh fork (F09: Setup.s.sol, then shipStrategy.ts, then the snapshot).
+  # `deploy` NEEDS A FRESH FORK: if the fork was used before, stop it and run `fork` again first.
+  # A second deploy on the same fork stops at "already shipped". (Setup.s.sol alone no longer ships.)
+  pnpm --dir scripts run deploy
 
   pnpm --dir scripts quote --amount 1000 --dir usdc-to-mumb   # table; best split > pool only
   pnpm --dir scripts test                                      # 17 unit tests, no chain

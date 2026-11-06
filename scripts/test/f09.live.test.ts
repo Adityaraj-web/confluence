@@ -2,7 +2,7 @@
 // Run: node --env-file=../.env.example --env-file-if-exists=../.env --import tsx --test test/f09.live.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPublicClient, http, type ContractFunctionArgs, type Hex } from "viem";
+import { createPublicClient, http, type Address, type ContractFunctionArgs, type Hex } from "viem";
 import { rpcUrl } from "../src/config.js";
 
 const client = createPublicClient({ transport: http(rpcUrl()) });
@@ -117,4 +117,26 @@ test("test_F09_live_localJsonCarriesTheShipInputs", async () => {
   assert.equal(d.swapVmRouter.toLowerCase(), "0x111111338c5091e8440b67b168bae16a668ac0de");
   assert.equal(d.aqua.toLowerCase(), "0x1111113ccf1426a8e30e2bff5e005d929bf6a90a");
   assert.equal(d.poolManager.toLowerCase(), "0x000000000004444c5dc75cb358380d2e3de08a90");
+});
+
+// ---- step 4: Priya is shipped, read independently of shipStrategy.ts ----
+
+import { aquaAbi } from "../src/abis/IAqua.js";
+
+test("test_F09_live_priyaIsShippedWithTheFullAmounts", async () => {
+  // Read-only. Holds at the deploy snapshot: every demo command reverts to it when it finishes.
+  const d = loadDeployment();
+  const raw = (token: Address) =>
+    client.readContract({
+      address: d.aqua,
+      abi: aquaAbi,
+      functionName: "rawBalances",
+      args: [d.maker, d.swapVmRouter, d.expectedStrategyHash, token],
+    });
+  const [mumbBalance, mumbTokens] = await raw(d.mumb);
+  const [usdcBalance, usdcTokens] = await raw(d.usdc);
+  assert.equal(mumbBalance, 100_000n * 10n ** 18n, "100,000 MUMB shipped");
+  assert.equal(usdcBalance, 100_000n * 10n ** 6n, "100,000 USDC shipped");
+  assert.equal(mumbTokens, 2, "the strategy has two tokens");
+  assert.equal(usdcTokens, 2, "the strategy has two tokens");
 });

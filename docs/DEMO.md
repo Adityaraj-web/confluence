@@ -3,7 +3,9 @@
 Numbers in angle brackets are filled in from the real run during F09. Never put a number on a slide that the demo did not produce.
 
 ## Setup before judges arrive
-- anvil fork running at `FORK_BLOCK`; setup script done; snapshot id saved.
+- A **fresh** anvil fork at `FORK_BLOCK`: `pnpm --dir scripts run fork` (it keeps running; leave it in its own terminal).
+- Then `pnpm --dir scripts run deploy`: deploys, registers, ships Priya's strategy and takes the snapshot. **`deploy` needs a fresh fork. If the fork has been used, stop it and run `fork` again first**: a second `deploy` on the same fork stops with "already shipped".
+- Between and during rehearsals use `pnpm --dir scripts run demo` (every run reverts to the snapshot itself and leaves a new one), and `demo:reset` if you want the chain back at the snapshot without running a swap. No new `deploy` is needed.
 - Web app open on the comparison screen; terminal with the demo runner visible.
 - Backup: the recorded run (OBS) on the desktop.
 
