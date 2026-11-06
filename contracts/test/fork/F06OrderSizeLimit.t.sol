@@ -77,6 +77,25 @@ contract F06OrderSizeLimitTest is ConfluenceBase {
         vm.prank(priya);
         hook.registerOrder(key, atLimit);
 
+        // The sweep only means something if the hook gets as far as the router with the big order: at a roomy
+        // limit it must skip because the router refused it, not because of `InsufficientGas`.
+        uint256 snapRoomy = vm.snapshotState();
+        vm.recordLogs();
+        assertTrue(_tryAtLimit(1_500_000, _hint(SWAP_USDC)), "hinted swap passes at a roomy limit");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.revertToState(snapRoomy);
+        uint256 skips;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter == address(hook) && logs[i].topics[0] == ConfluenceHook.AquaSkipped.selector) {
+                skips++;
+                bytes memory reason = abi.decode(logs[i].data, (bytes));
+                assertTrue(
+                    bytes4(reason) != ConfluenceHook.InsufficientGas.selector, "reached the router, not a gas skip"
+                );
+            }
+        }
+        assertEq(skips, 1, "exactly one AquaSkipped: the router refused the at-limit order");
+
         uint256[] memory limits = _gasLimits();
         uint256 checked;
         for (uint256 i; i < limits.length; i++) {
