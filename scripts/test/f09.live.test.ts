@@ -2,7 +2,7 @@
 // Run: node --env-file=../.env.example --env-file-if-exists=../.env --import tsx --test test/f09.live.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPublicClient, http, type Hex } from "viem";
+import { createPublicClient, http, type ContractFunctionArgs, type Hex } from "viem";
 import { rpcUrl } from "../src/config.js";
 
 const client = createPublicClient({ transport: http(rpcUrl()) });
@@ -60,11 +60,16 @@ const poolKeyAbi = [
 
 test("test_F09_live_bandArgsEqualContractBuild", async () => {
   const d = loadDeployment();
+  const args: ContractFunctionArgs<typeof poolPriceBandExtructionAbi, "pure", "build"> = [
+    POOL_MANAGER,
+    d.poolKey,
+    BAND_BPS,
+  ];
   const onChain = await client.readContract({
     address: d.band,
     abi: poolPriceBandExtructionAbi,
     functionName: "build",
-    args: [POOL_MANAGER, d.poolKey, BAND_BPS],
+    args,
   });
   assert.equal(buildBandArgs(POOL_MANAGER, d.poolKey, BAND_BPS), onChain);
 });
