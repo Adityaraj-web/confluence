@@ -187,11 +187,14 @@ contract F05AquaLegTest is ConfluenceBase {
         _assertSkipped("no order", -int256(SWAP_USDC), _hint(SWAP_USDC));
     }
 
+    /// @dev The hook approves the router for exactly the hint (once, on the input token), then resets it to zero.
     function test_F05_approvalReset() public {
+        vm.expectCall(USDC, abi.encodeCall(IERC20.approve, (ROUTER, HINT_60_PCT_USDC)), 1);
         _swapExactIn(trader, usdcForMumb(), SWAP_USDC, _hint(HINT_60_PCT_USDC));
         assertEq(IERC20(USDC).allowance(address(hook), ROUTER), 0, "USDC allowance reset");
         assertEq(mumb.allowance(address(hook), ROUTER), 0, "MUMB allowance reset");
 
+        vm.expectCall(address(mumb), abi.encodeCall(IERC20.approve, (ROUTER, HINT_60_PCT_MUMB)), 1);
         _swapExactIn(trader, mumbForUsdc(), SWAP_MUMB, _hint(HINT_60_PCT_MUMB));
         assertEq(IERC20(USDC).allowance(address(hook), ROUTER), 0, "USDC allowance reset, reverse");
         assertEq(mumb.allowance(address(hook), ROUTER), 0, "MUMB allowance reset, reverse");
