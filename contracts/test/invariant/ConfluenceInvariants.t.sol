@@ -79,8 +79,8 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
         assertEq(handler.bandViolations(), 0, "an AquaFill executed outside the band");
     }
 
-    /// @notice Non-vacuity guard (the invariants above would pass with a handler that does nothing): the run must
-    /// have produced at least one Aqua fill and at least one band skip.
+    /// @notice Logging only. Foundry resets state between runs, so these counters are per run and cannot carry a
+    /// pass/fail guard (it would fail by chance); non-vacuity is `test_F08_handlerReachesFillAndSkip`.
     function afterInvariant() public {
         emit log_named_uint("F08 hinted trader swaps", handler.hintedSwaps());
         emit log_named_uint("F08 AquaFill", handler.fills());
@@ -88,8 +88,69 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
         emit log_named_uint("F08 skipped: other", handler.otherSkips());
         emit log_named_uint("F08 swap calls", handler.swapCalls());
         emit log_named_uint("F08 swap calls with the pool price inside the band", handler.swapCallsInBand());
-        assertGt(handler.fills(), 0, "vacuous run: no AquaFill");
-        assertGt(handler.bandSkips(), 0, "vacuous run: no band skip");
+        if (handler.otherSkips() > 0) emit log_named_bytes("F08 latest other skip reason", handler.lastOtherReason());
+
+        // Totals over all runs of this process: the EVM state resets between runs but the process env does not,
+        // so the last run's log carries the totals.
+        _addToTotal("F08_TOTAL_RUNS", 1);
+        _addToTotal("F08_TOTAL_SWAP_CALLS", handler.swapCalls());
+        _addToTotal("F08_TOTAL_IN_BAND", handler.swapCallsInBand());
+        _addToTotal("F08_TOTAL_FILLS", handler.fills());
+        _addToTotal("F08_TOTAL_BAND_SKIPS", handler.bandSkips());
+        _addToTotal("F08_TOTAL_OTHER_SKIPS", handler.otherSkips());
+        _tallyOtherSkips();
+        emit log_named_uint("F08 TOTAL runs", vm.envOr("F08_TOTAL_RUNS", uint256(0)));
+        emit log_named_uint("F08 TOTAL swap calls", vm.envOr("F08_TOTAL_SWAP_CALLS", uint256(0)));
+        emit log_named_uint("F08 TOTAL swap calls inside the band", vm.envOr("F08_TOTAL_IN_BAND", uint256(0)));
+        emit log_named_uint("F08 TOTAL AquaFill", vm.envOr("F08_TOTAL_FILLS", uint256(0)));
+        emit log_named_uint("F08 TOTAL band skips", vm.envOr("F08_TOTAL_BAND_SKIPS", uint256(0)));
+        emit log_named_uint("F08 TOTAL other skips", vm.envOr("F08_TOTAL_OTHER_SKIPS", uint256(0)));
+    }
+
+    /// @dev Count non-band skips by selector across runs, in process env: key `F08_OTHER_<selector>`, keys listed in
+    /// `F08_OTHER_KEYS`. Logging only.
+    function _tallyOtherSkips() internal {
+        bytes[] memory reasons = handler.otherReasonList();
+        for (uint256 i; i < reasons.length; i++) {
+            bytes4 sel = reasons[i].length >= 4 ? bytes4(reasons[i]) : bytes4(0);
+            string memory k = string.concat("F08_OTHER_", vm.toString(bytes32(sel)));
+            if (vm.envOr(k, uint256(0)) == 0) {
+                vm.setEnv("F08_OTHER_KEYS", string.concat(vm.envOr("F08_OTHER_KEYS", string("")), k, ";"));
+                vm.setEnv(string.concat(k, "_SAMPLE"), vm.toString(reasons[i]));
+            }
+            _addToTotal(k, 1);
+        }
+        string[] memory keys = vm.split(vm.envOr("F08_OTHER_KEYS", string("")), ";");
+        for (uint256 i; i < keys.length; i++) {
+            if (bytes(keys[i]).length == 0) continue;
+            emit log_named_uint(string.concat("F08 TOTAL other skip ", keys[i]), vm.envOr(keys[i], uint256(0)));
+            emit log_named_string("   first sample", vm.envOr(string.concat(keys[i], "_SAMPLE"), string("")));
+        }
+    }
+
+    /// @dev Add `n` to a process-level counter (logging only; nothing asserts on it).
+    function _addToTotal(string memory name, uint256 n) internal {
+        vm.setEnv(name, vm.toString(vm.envOr(name, uint256(0)) + n));
+    }
+
+    /// @notice Non-vacuity, deterministic: the handler's own swap path produces a real `AquaFill` and, on the
+    /// repeat, a `PoolPriceBandExceeded` skip, and the ghost band check calls the fill inside the band. So the
+    /// invariants above are reading real fills and skips, not an idle handler.
+    function test_F08_handlerReachesFillAndSkip() public {
+        uint256 amountIn = 1_500e6;
+        handler.doTraderSwap(true, amountIn, amountIn);
+        assertEq(handler.fills(), 1, "first 100% hint: no AquaFill");
+        assertEq(handler.bandSkips(), 0, "first fill was band-skipped");
+
+        // Same size, same direction, pool unchanged (the hint was 100%): Priya's curve has moved away from it.
+        handler.doTraderSwap(true, amountIn, amountIn);
+        assertEq(handler.fills(), 1, "the repeat filled");
+        assertEq(handler.bandSkips(), 1, "the repeat was not skipped for PoolPriceBandExceeded");
+        assertEq(handler.otherSkips(), 0, "a skip for another reason");
+        assertEq(handler.bandViolations(), 0, "a fill outside the band");
+        assertEq(handler.hintedSwaps(), 2);
+        assertEq(handler.swapCalls(), 2);
+        _assertHookHoldsNothing();
     }
 
     // ---------------------------------------------------------------- fuzz
@@ -97,6 +158,7 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
     /// @notice From one state, a split on a grid of hints (10% to 100% of the input) never gives the trader less
     /// than the pool alone, in either direction. Also asserts that some hint on the grid really filled, so the
     /// comparison is not pool-only against pool-only.
+    /// forge-config: default.fuzz.runs = 64
     function testFuzz_F08_splitNeverWorseThanPoolOnly(uint256 amountSeed, bool usdcIn) public {
         bool zeroForOne = usdcIn ? usdcForMumb() : mumbForUsdc();
         uint256 unit = usdcIn ? 1e6 : 1e18;
@@ -125,6 +187,7 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
 
     /// @notice After many 100% Aqua fills, one arbitrage swap brings the pool price back within the band of
     /// Priya's price, and Aqua fills resume. Written in step 4; red until then.
+    /// forge-config: default.fuzz.runs = 64
     function testFuzz_F08_fullAquaFillAnchorRecovers(uint256, bool) public pure {
         revert("F08 step 4: not written yet");
     }
