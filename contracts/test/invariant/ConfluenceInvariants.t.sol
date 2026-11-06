@@ -2,8 +2,17 @@
 pragma solidity 0.8.30;
 
 import {Vm} from "forge-std/Vm.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {FixedPoint96} from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
+import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 
+import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
+import {PoolPriceBandExtruction} from "../../src/PoolPriceBandExtruction.sol";
 import {ConfluenceBase} from "../base/ConfluenceBase.t.sol";
 import {ConfluenceHandler} from "./handlers/ConfluenceHandler.sol";
 
@@ -90,8 +99,8 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
         emit log_named_uint("F08 swap calls with the pool price inside the band", handler.swapCallsInBand());
         if (handler.otherSkips() > 0) emit log_named_bytes("F08 latest other skip reason", handler.lastOtherReason());
 
-        // Totals over all runs of this process: the EVM state resets between runs but the process env does not,
-        // so the last run's log carries the totals.
+        // TEST-ONLY totals over all runs of this process (see `_addToTotal`): the EVM state resets between runs but
+        // the process env does not, so the last run's log carries the totals.
         _addToTotal("F08_TOTAL_RUNS", 1);
         _addToTotal("F08_TOTAL_SWAP_CALLS", handler.swapCalls());
         _addToTotal("F08_TOTAL_IN_BAND", handler.swapCallsInBand());
@@ -130,7 +139,9 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
         }
     }
 
-    /// @dev Add `n` to a process-level counter (logging only; nothing asserts on it).
+    /// @dev TEST-ONLY. Add `n` to a process-level counter through `vm.setEnv`. This relies on the process environment
+    /// surviving the state reset between invariant runs, which is how forge behaves today but is not a guarantee, so
+    /// the totals are for the log (and the PROGRESS entry) and nothing asserts on them.
     function _addToTotal(string memory name, uint256 n) internal {
         vm.setEnv(name, vm.toString(vm.envOr(name, uint256(0)) + n));
     }
@@ -187,11 +198,78 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
         assertTrue(anyFill, "no hint on the grid produced an AquaFill");
     }
 
-    /// @notice After many 100% Aqua fills, one arbitrage swap brings the pool price back within the band of
-    /// Priya's price, and Aqua fills resume. Written in step 4; red until then.
+    /// @notice After 100% Aqua fills of one size, the band refuses the next one (Priya's curve has moved away from
+    /// the pool, which a 100% hint leaves untouched). One pool-only arbitrage swap, with the price limit at Priya's
+    /// marginal price (the ratio of her virtual balances), brings the pool price back within the band of hers, and
+    /// the same 100% fill goes through again.
     /// forge-config: default.fuzz.runs = 64
-    function testFuzz_F08_fullAquaFillAnchorRecovers(uint256, bool) public pure {
-        revert("F08 step 4: not written yet");
+    function testFuzz_F08_fullAquaFillAnchorRecovers(uint256 sizeSeed, bool usdcIn) public {
+        bool zeroForOne = usdcIn ? usdcForMumb() : mumbForUsdc();
+        uint256 unit = usdcIn ? 1e6 : 1e18;
+        uint256 size = bound(sizeSeed, 300 * unit, 1_000 * unit);
+        uint160 startPrice = _snap().sqrtPriceX96;
+
+        // Fill 100% from Aqua until the band refuses. A fill of up to about 2,000 units passes the band the first
+        // time (ARCHITECTURE section 5), so at least one fill happens.
+        uint256 fills;
+        bool refused;
+        for (uint256 i; i < 40 && !refused; i++) {
+            // The refused swap is a probe: the hook falls back to the pool, which fills it all and moves the price,
+            // so it is reverted and the pool stays where the Aqua fills left it.
+            uint256 snap = vm.snapshotState();
+            (,, Vm.Log[] memory logs) = _swapWithLogs(zeroForOne, size, _hint(size));
+            (bool filled,,) = _findAquaFill(logs);
+            if (filled) {
+                fills++;
+            } else {
+                assertTrue(_bandSkipped(logs), "the fill was skipped, but not for PoolPriceBandExceeded");
+                vm.revertToState(snap);
+                refused = true;
+            }
+        }
+        assertTrue(refused, "the band never refused a fill");
+        assertGe(fills, 1, "no fill before the band refused");
+        assertEq(_snap().sqrtPriceX96, startPrice, "a 100% hint moved the pool price");
+        _assertHookHoldsNothing();
+
+        // Priya's marginal price. The pool can still be inside the band of it while a fill of this size is refused:
+        // the band judges the fill's own price, her marginal price plus that fill's slippage.
+        (uint160 target, bool poolInBand) = _priyaPrice();
+
+        // One arbitrage swap, pool-only, down or up to her price (always a real move: after a fill hers has moved).
+        assertTrue(target != startPrice, "Priya's price did not move");
+        bool arbZeroForOne = target < startPrice;
+        address tokenIn = Currency.unwrap(arbZeroForOne ? key.currency0 : key.currency1);
+        // `uint256(...)`: an untyped `cond ? 1e6 : 1e18` is a uint64, and 500 * 1e18 overflows it.
+        // Far more than the move needs (about 700 units for 1% of price on this seed): the price limit stops the swap
+        // at her price and the rest of the input stays with the arbitrageur.
+        uint256 arbIn = 5_000 * (tokenIn == USDC ? uint256(1e6) : uint256(1e18));
+        _fundArb(tokenIn, arbIn);
+        vm.startPrank(arb);
+        IERC20(USDC).approve(address(swapRouter), type(uint256).max);
+        mumb.approve(address(swapRouter), type(uint256).max);
+        swapRouter.swap(
+            key,
+            IPoolManager.SwapParams({
+                zeroForOne: arbZeroForOne,
+                amountSpecified: -int256(arbIn),
+                sqrtPriceLimitX96: target
+            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ""
+        );
+        vm.stopPrank();
+
+        (, poolInBand) = _priyaPrice();
+        assertTrue(poolInBand, "one arbitrage swap did not bring the pool back within the band of Priya's price");
+
+        // Aqua fills resume: the fill the band refused a moment ago now goes through.
+        (,, Vm.Log[] memory resumed) = _swapWithLogs(zeroForOne, size, _hint(size));
+        (bool filledAgain,,) = _findAquaFill(resumed);
+        assertTrue(
+            filledAgain, string.concat("Aqua did not resume after the pool came back; skip reason ", vm.toString(_skipReason(resumed)))
+        );
+        _assertHookHoldsNothing();
     }
 
     // ---------------------------------------------------------------- checks on the test machinery
@@ -221,6 +299,51 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /// @dev Priya's marginal price as a pool `sqrtPriceX96`, and whether the pool's price is within the band of it.
+    /// Her price is the ratio of her virtual balances, currency1 per currency0: `sqrt(v1 * 2^192 / v0)`.
+    function _priyaPrice() internal view returns (uint160 sqrtPriya, bool poolInBand) {
+        uint256 vMumb = _aquaBalance(address(mumb));
+        uint256 vUsdc = _aquaBalance(USDC);
+        (uint256 v0, uint256 v1) = usdcIsCurrency0 ? (vUsdc, vMumb) : (vMumb, vUsdc);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        sqrtPriya = uint160(Math.sqrt(FullMath.mulDiv(v1, uint256(1) << 192, v0)));
+
+        uint256 poolX96 = FullMath.mulDiv(_snap().sqrtPriceX96, _snap().sqrtPriceX96, FixedPoint96.Q96);
+        uint256 priyaX96 = FullMath.mulDiv(v1, FixedPoint96.Q96, v0);
+        uint256 diff = priyaX96 > poolX96 ? priyaX96 - poolX96 : poolX96 - priyaX96;
+        poolInBand = diff <= FullMath.mulDiv(poolX96, BAND_BPS, 10_000);
+    }
+
+    /// @dev The `reason` of the swap's `AquaSkipped`, empty if it had none.
+    function _skipReason(Vm.Log[] memory logs) internal view returns (bytes memory reason) {
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter == address(hook) && logs[i].topics[0] == ConfluenceHook.AquaSkipped.selector) {
+                return abi.decode(logs[i].data, (bytes));
+            }
+        }
+    }
+
+    /// @dev Whether the swap's `AquaSkipped` carries `PoolPriceBandExceeded`.
+    function _bandSkipped(Vm.Log[] memory logs) internal view returns (bool) {
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter == address(hook) && logs[i].topics[0] == ConfluenceHook.AquaSkipped.selector) {
+                bytes memory reason = abi.decode(logs[i].data, (bytes));
+                return reason.length >= 4 && bytes4(reason) == PoolPriceBandExtruction.PoolPriceBandExceeded.selector;
+            }
+        }
+        return false;
+    }
+
+    /// @dev Give the arbitrageur `amount` of `token`: MUMB is minted by the deployer, USDC set with `deal`.
+    function _fundArb(address token, uint256 amount) internal {
+        if (token == address(mumb)) {
+            vm.prank(deployer);
+            mumb.mint(arb, amount);
+        } else {
+            deal(token, arb, amount);
+        }
+    }
 
     /// @dev The positive output amount of a swap: MUMB when the trader paid USDC, USDC otherwise.
     function _out(BalanceDelta d, bool usdcIn) internal view returns (uint256) {
