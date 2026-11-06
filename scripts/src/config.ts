@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 
 /**
  * Gas limit for every swap transaction and every simulation of one (ARCHITECTURE
@@ -33,6 +33,21 @@ export interface Deployment {
   /** The swap router the trader uses (v4-core PoolSwapTest in the local demo). */
   swapRouter: Address;
   poolKey: PoolKeyJson;
+  /** PoolPriceBandExtruction, the Extruction target in Priya's program. */
+  band: Address;
+  /** The Aqua registry. */
+  aqua: Address;
+  /** The canonical AquaSwapVMRouter v1.0.2: the Aqua `app` Priya ships to. */
+  swapVmRouter: Address;
+  poolManager: Address;
+  /** abi.encode(Order) of the order Setup registered in the hook; shipStrategy.ts must rebuild exactly these bytes. */
+  orderHex: Hex;
+  /** keccak256(orderHex): the Aqua strategy hash the ship must produce. */
+  expectedStrategyHash: Hex;
+  /** Band width in basis points, as in the registered order's Extruction args. */
+  bandBps: number;
+  /** Priya's flat fee on the 1e9 scale (3000000 = 0.30%). */
+  feeE9: number;
   /** Priya, the maker. */
   maker: Address;
   /** The trader the quoter simulates as. */

@@ -6,3 +6,4 @@ node_modules/
 # Local run output (F07/F09): regenerate with the setup script
 contracts/broadcast/
 deployments/local.json
+deployments/last-demo.json

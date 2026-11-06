@@ -44,6 +44,19 @@ export const confluenceHookAbi = [
   },
   {
     "type": "function",
+    "name": "MAX_ORDER_DATA_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_REASON_BYTES",
     "inputs": [],
     "outputs": [
@@ -1243,6 +1256,22 @@ export const confluenceHookAbi = [
     "type": "error",
     "name": "NotPoolManager",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OrderDataTooLarge",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

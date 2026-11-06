@@ -3,7 +3,6 @@ pragma solidity 0.8.30;
 
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {IAqua} from "@1inch/aqua/src/interfaces/IAqua.sol";
 import {ISwapVM} from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
@@ -22,12 +21,15 @@ import {PoolPriceBandExtruction} from "../src/PoolPriceBandExtruction.sol";
 import {MockMUMB} from "../src/mocks/MockMUMB.sol";
 import {StrategyLib} from "../test/base/StrategyLib.sol";
 
-/// @notice Pulled forward from F09 (D-21): ARCHITECTURE section 2, steps 2 to 7, on a running anvil fork.
+/// @notice ARCHITECTURE section 2, steps 2 to 5 and 7, on a running anvil fork (pulled forward in F07, D-21).
 /// Writes `deployments/local.json`. Run from `contracts/`:
 ///   forge script script/Setup.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
 /// Keys are anvil's public test keys from `.env` (DEPLOYER, PRIYA, TRADER).
-/// The trader and Priya are funded and approved for real, so the quoter's `eth_call` needs no state override.
-/// The step 8 snapshot belongs to F09's `make setup`; this script does not take it.
+/// The trader and Priya are funded, and the trader has approved the swap router, so the quoter's `eth_call` needs
+/// no state override.
+/// It does NOT ship Priya's strategy: step 6 is `scripts/src/shipStrategy.ts` (F09), and step 8 (the snapshot) is
+/// `pnpm --dir scripts run deploy`. Until step 6 runs, the hook has an order registered but Aqua has no strategy
+/// for it, so a hinted swap is skipped. Use `deploy`, not this script alone, for a working demo.
 contract Setup is Script, StrategyLib {
     address internal constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address internal constant ROUTER = 0x111111338c5091E8440b67B168bAe16a668AC0De;
@@ -41,8 +43,6 @@ contract Setup is Script, StrategyLib {
     uint256 internal constant TRADER_USDC = 100_000e6;
     uint256 internal constant SEED_USDC = 2_500e6;
     uint256 internal constant SEED_MUMB = 2_500e18;
-    uint256 internal constant SHIPPED_MUMB = 100_000e18;
-    uint256 internal constant SHIPPED_USDC = 100_000e6;
     uint16 internal constant BAND_BPS = 200;
     uint24 internal constant POOL_FEE = 3000;
     int24 internal constant TICK_SPACING = 60;
@@ -97,21 +97,13 @@ contract Setup is Script, StrategyLib {
         d.key = _createPool(d);
         vm.stopBroadcast();
 
-        // Step 6 and 7 as Priya.
+        // Step 7 as Priya. Step 6 (her Aqua approvals and the ship) is `scripts/src/shipStrategy.ts`: it rebuilds
+        // this order with the 1inch SDK and refuses to ship unless the bytes equal `orderHex` in local.json.
         ISwapVM.Order memory order = _buildOrder(
             a.priya,
             _buildBandProgram(FEE_0_30_PCT, address(d.band), d.band.build(IPoolManager(POOL_MANAGER), d.key, BAND_BPS))
         );
         vm.startBroadcast(priyaPk);
-        d.mumb.approve(AQUA, type(uint256).max);
-        IERC20(USDC).approve(AQUA, type(uint256).max);
-        address[] memory tokens = new address[](2);
-        tokens[0] = address(d.mumb);
-        tokens[1] = USDC;
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = SHIPPED_MUMB;
-        amounts[1] = SHIPPED_USDC;
-        bytes32 strategyHash = IAqua(AQUA).ship(ROUTER, abi.encode(order), tokens, amounts);
         d.hook.registerOrder(d.key, order);
         vm.stopBroadcast();
 
@@ -121,7 +113,7 @@ contract Setup is Script, StrategyLib {
         d.mumb.approve(address(d.swapRouter), type(uint256).max);
         vm.stopBroadcast();
 
-        _writeDeployment(a, d, strategyHash);
+        _writeDeployment(a, d, abi.encode(order));
     }
 
     // ---------------------------------------------------------------- steps
@@ -192,7 +184,7 @@ contract Setup is Script, StrategyLib {
 
     // ---------------------------------------------------------------- output
 
-    function _writeDeployment(Actors memory a, Deployed memory d, bytes32 strategyHash) internal {
+    function _writeDeployment(Actors memory a, Deployed memory d, bytes memory orderBytes) internal {
         string memory poolKeyJson = string.concat(
             '{"currency0":"',
             vm.toString(Currency.unwrap(d.key.currency0)),
@@ -206,6 +198,7 @@ contract Setup is Script, StrategyLib {
             vm.toString(address(d.key.hooks)),
             '"}'
         );
+        // Built in two parts: one `string.concat` with all of this runs out of stack.
         string memory json = string.concat(
             '{"usdc":"',
             vm.toString(USDC),
@@ -221,9 +214,27 @@ contract Setup is Script, StrategyLib {
             vm.toString(a.priya),
             '","trader":"',
             vm.toString(a.trader),
-            '","strategyHash":"',
-            vm.toString(strategyHash),
-            '","poolKey":',
+            '",'
+        );
+        // `expectedStrategyHash` is what Aqua's `ship` must return: keccak256 of the ABI-encoded order
+        // (lib/aqua/src/Aqua.sol:41). shipStrategy.ts checks the Shipped event against it.
+        json = string.concat(
+            json,
+            '"aqua":"',
+            vm.toString(AQUA),
+            '","swapVmRouter":"',
+            vm.toString(ROUTER),
+            '","poolManager":"',
+            vm.toString(POOL_MANAGER),
+            '","orderHex":"',
+            vm.toString(orderBytes),
+            '","expectedStrategyHash":"',
+            vm.toString(keccak256(orderBytes)),
+            '","bandBps":',
+            vm.toString(uint256(BAND_BPS)),
+            ',"feeE9":',
+            vm.toString(uint256(FEE_0_30_PCT)),
+            ',"poolKey":',
             poolKeyJson,
             "}"
         );
