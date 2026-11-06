@@ -56,3 +56,20 @@ test("test_F09_orderEncodingShape", () => {
   assert.ok(strip(order).includes(strip(MAKER)), "the maker is in the order");
   assert.equal(keccak256(order).length, 66);
 });
+
+import { assertSameBytes, firstByteDifference } from "../src/shipStrategy.js";
+
+test("test_F09_firstByteDifference", () => {
+  assert.equal(firstByteDifference("0x0102", "0x0102"), null);
+  assert.equal(firstByteDifference("0x0102", "0x0103"), 1);
+  assert.equal(firstByteDifference("0x01", "0x0102"), 1, "a prefix differs at the first missing byte");
+  assert.equal(firstByteDifference("0xff0102", "0x0102"), 0);
+});
+
+test("test_F09_assertSameBytesNamesTheFirstDifference", () => {
+  assertSameBytes("same", "0xabcd", "0xabcd");
+  assert.throws(
+    () => assertSameBytes("TS order vs orderHex", "0xaabbcc", "0xaabbdd"),
+    /TS order vs orderHex: first difference at byte 2 \(got 0xcc, want 0xdd\); lengths 3 and 3/,
+  );
+});
