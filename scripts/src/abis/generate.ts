@@ -13,6 +13,8 @@ const TARGETS: [string, string][] = [
   ["ConfluenceHook", "confluenceHookAbi"],
   ["MockMUMB", "mockMumbAbi"],
   ["IPoolManager", "poolManagerAbi"],
+  ["PoolPriceBandExtruction", "poolPriceBandExtructionAbi"],
+  ["IAqua", "aquaAbi"],
 ];
 
 for (const [name, exportName] of TARGETS) {

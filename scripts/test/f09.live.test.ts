@@ -33,3 +33,62 @@ test("test_F09_live_snapshotRevertIsReusableAfterResnapshot", async () => {
   assert.equal(await revertTo(s1), true, "a re-taken snapshot reverts");
   assert.equal(await client.getBlockNumber({ cacheTime: 0 }), start);
 });
+
+// ---- step 2: the TS-built order is byte-equal to the one StrategyLib built and Setup registered ----
+
+import { encodeAbiParameters, keccak256 } from "viem";
+import { confluenceHookAbi } from "../src/abis/ConfluenceHook.js";
+import { poolPriceBandExtructionAbi } from "../src/abis/PoolPriceBandExtruction.js";
+import { loadDeployment } from "../src/config.js";
+import { FEE_0_30_PCT, buildBandArgs, buildBandProgram, buildOrderEncoded } from "../src/strategy.js";
+
+const POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90" as const;
+const BAND_BPS = 200; // Setup.s.sol BAND_BPS
+
+const poolKeyAbi = [
+  {
+    type: "tuple",
+    components: [
+      { name: "currency0", type: "address" },
+      { name: "currency1", type: "address" },
+      { name: "fee", type: "uint24" },
+      { name: "tickSpacing", type: "int24" },
+      { name: "hooks", type: "address" },
+    ],
+  },
+] as const;
+
+test("test_F09_live_bandArgsEqualContractBuild", async () => {
+  const d = loadDeployment();
+  const onChain = await client.readContract({
+    address: d.band,
+    abi: poolPriceBandExtructionAbi,
+    functionName: "build",
+    args: [POOL_MANAGER, d.poolKey, BAND_BPS],
+  });
+  assert.equal(buildBandArgs(POOL_MANAGER, d.poolKey, BAND_BPS), onChain);
+});
+
+test("test_F09_live_tsOrderEqualsRegisteredOrder", async () => {
+  const d = loadDeployment();
+  const poolId = keccak256(encodeAbiParameters(poolKeyAbi, [d.poolKey]));
+  const registered = await client.readContract({
+    address: d.hook,
+    abi: confluenceHookAbi,
+    functionName: "orderOf",
+    args: [poolId],
+  });
+  assert.equal(registered.maker.toLowerCase(), d.maker.toLowerCase(), "an order is registered for Priya");
+
+  const bandArgs = buildBandArgs(POOL_MANAGER, d.poolKey, BAND_BPS);
+  const tsOrder = buildOrderEncoded(d.maker, buildBandProgram(FEE_0_30_PCT, d.band, bandArgs));
+
+  const registeredEncoded = encodeAbiParameters(
+    [{ type: "tuple", components: [{ name: "maker", type: "address" }, { name: "traits", type: "uint256" }, { name: "data", type: "bytes" }] }],
+    [registered],
+  );
+  console.log(`# registered traits ${registered.traits}, data ${registered.data.length / 2 - 1} bytes`);
+  assert.equal(tsOrder, registeredEncoded);
+  // Aqua keys a strategy by keccak256 of the order, so equal bytes mean the same strategy hash.
+  assert.equal(keccak256(tsOrder), d.strategyHash);
+});

@@ -3,7 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 
 /**
  * Gas limit for every swap transaction and every simulation of one (ARCHITECTURE
@@ -33,6 +33,10 @@ export interface Deployment {
   /** The swap router the trader uses (v4-core PoolSwapTest in the local demo). */
   swapRouter: Address;
   poolKey: PoolKeyJson;
+  /** PoolPriceBandExtruction, the Extruction target in Priya's program. */
+  band: Address;
+  /** Aqua strategy hash of the order Setup built (keccak256 of the ABI-encoded order). */
+  strategyHash: Hex;
   /** Priya, the maker. */
   maker: Address;
   /** The trader the quoter simulates as. */
