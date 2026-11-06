@@ -76,6 +76,24 @@ contract ConfluenceHook is IHooks {
 
     /// @notice The most revert data of a failed router call that `AquaSkipped` carries.
     uint256 public constant MAX_REASON_BYTES = 256;
+    /// @notice Gas the hook keeps back when it calls the router: the router gets everything else. If the router
+    /// reverts or runs out of gas, this is what is left to unwind and to finish the rest of the swap (the pool leg
+    /// and the swap router's settlement), which the 63/64 rule alone would not leave.
+    /// @dev Measured (D-20), against a strategy that burns all the gas it is given and against a legitimate fill, over
+    /// 52 transaction gas limits from 285,000 to 3,000,000: 105,000 is the smallest reserve at which the swap never
+    /// reverts where the pool alone would pass (100,000 reverts at limits between 335,000 and 405,000). 150,000 is
+    /// that plus 43%. The measurement used v4-core's `PoolSwapTest` as the swap router and a pool leg that crosses no
+    /// initialised tick; a swap router that does more after `beforeSwap`, or a pool leg that crosses ticks, needs
+    /// more. A reserve measured at one gas limit is not enough: the call frames above the hook keep 1/64 of their
+    /// gas each, which helps a large limit and not a small one.
+    uint256 public constant AQUA_GAS_RESERVE = 150_000;
+    /// @notice The gas a legitimate Aqua fill needs inside the router call. Below `AQUA_GAS_RESERVE` plus this, the
+    /// hook skips the Aqua leg instead of starting a call that could not finish.
+    /// @dev Measured (D-20): the router call of `test_F05_fullAquaFill` uses 152,432 gas, and of
+    /// `test_F05_reverseDirection` 153,418; this is the larger rounded up to the next 10,000. The gas the hook spends
+    /// before the call (`take`, `approve`) is not counted, so within that distance of the threshold the call can still
+    /// run out of gas; that is caught like any other router failure and the pool fills the swap.
+    uint256 public constant MIN_AQUA_GAS = 160_000;
 
     /// @dev One active maker order per pool (D-09).
     mapping(PoolId => ISwapVM.Order) internal _orders;
@@ -162,6 +180,11 @@ contract ConfluenceHook is IHooks {
         uint256 available = (params.zeroForOne ? key.currency0 : key.currency1).balanceOf(address(poolManager));
         if (available < a) return _skipped(id, abi.encodeWithSelector(PoolManagerShort.selector, available));
 
+        uint256 gasLeft = gasleft();
+        if (gasLeft < AQUA_GAS_RESERVE + MIN_AQUA_GAS) {
+            return _skipped(id, abi.encodeWithSelector(InsufficientGas.selector, gasLeft));
+        }
+
         (bool ok, uint256 b, bytes memory reason) = _fill(key, params.zeroForOne, a, order);
         if (!ok) return _skipped(id, reason);
         // `b` is only known after the router call, and the PoolManager is locked against re-entry during it.
@@ -206,8 +229,14 @@ contract ConfluenceHook is IHooks {
 
         // The router is what calls transferFrom on the taker (D-02), so it gets the approval, for exactly `a`.
         IERC20(tokenIn).forceApprove(router, a);
+        // The router gets all the gas except `AQUA_GAS_RESERVE`, so a revert or an out-of-gas inside it is caught here
+        // and the hook still has the gas to unwind and to let the rest of the swap run. Without the cap the 63/64 rule
+        // would leave only about 1/64 of the gas at each call level. Built first, so its cost is not in the cap.
+        bytes memory takerData = _takerData();
+        uint256 gasNow = gasleft();
+        uint256 routerGas = gasNow > AQUA_GAS_RESERVE ? gasNow - AQUA_GAS_RESERVE : 0;
         // Only `b` is used: the router's own check makes the amount in equal `a` (TakerTraits.sol:179).
-        try ISwapVM(router).swap(order, tokenIn, Currency.unwrap(currencyOut), a, _takerData()) returns (
+        try ISwapVM(router).swap{gas: routerGas}(order, tokenIn, Currency.unwrap(currencyOut), a, takerData) returns (
             uint256, uint256 amountOut, bytes32
         ) {
             ok = true;

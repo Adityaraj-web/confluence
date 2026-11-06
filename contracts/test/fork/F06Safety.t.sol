@@ -64,8 +64,9 @@ contract F06SafetyTest is ConfluenceBase {
     uint256 internal constant SWAP_MUMB = 1_000e18;
     /// @dev The 60% split of F05, unchanged by F06.
     uint256 internal constant SPLIT_60_MUMB_OUT = 991_498_196_999_760_649_578;
-    /// @dev Gas given to the whole swap in the gas tests, so the 63/64 rule is what the hook has to live with.
-    uint256 internal constant GAS_BUDGET = 3_000_000;
+    /// @dev Gas limit of the whole swap in `test_F06_routerOutOfGasFallsBack`: low enough that the 63/64 rule, not
+    /// the hook's reserve, would decide the outcome (see the failing-state note there).
+    uint256 internal constant GAS_BUDGET = 1_500_000;
     /// @dev The longest `reason` the hook emits for a router revert.
     uint256 internal constant MAX_REASON_BYTES = 256;
 
@@ -208,6 +209,14 @@ contract F06SafetyTest is ConfluenceBase {
 
     /// @dev A strategy whose Extruction burns all the gas it is given. The hook caps the router's gas so that a
     /// revert inside it is caught and the swap still finishes inside the same transaction.
+    ///
+    /// Failing-state note (recorded before the cap existed, at HEAD 961b992): with the router call uncapped, this
+    /// test reverts at the 1,500,000 limit set here, and a sweep of the limits showed the swap succeeding from
+    /// 2,000,000 upwards and reverting from 1,800,000 down. The trace at 1,500,000: `GasBurnExtruction` hit
+    /// `InvalidFEOpcode`, the router reverted, the hook caught it, reset the approval, settled the input back and
+    /// emitted `AquaSkipped(reason: 0x)`; then the PoolManager's continuation of the swap (the pool leg) ran out of
+    /// gas, because the 63/64 rule had left only about 1/64 of the gas at each level above the burn. The cap in
+    /// `ConfluenceHook._fill` exists to stop that.
     function test_F06_routerOutOfGasFallsBack() public {
         _shipAndRegister(address(new GasBurnExtruction()));
 
@@ -234,6 +243,78 @@ contract F06SafetyTest is ConfluenceBase {
         bytes[] memory reasons = _skips(logs);
         assertEq(reasons.length, 1, "one AquaSkipped");
         assertEq(reasons[0].length, 0, "running out of gas leaves no revert data");
+    }
+
+    /// @dev The guarantee at every gas limit, not at one: wherever the pool alone passes, the swap with an Aqua hint
+    /// passes too, for a legitimate fill and for a strategy that burns all its gas. Limits run from 285,000 (the
+    /// pool-only swap needs under 290,000) to 3,000,000, 5,000 apart up to 500,000, where the hook's gas checks bite.
+    /// A reserve measured at one limit is not enough: at 70,000 this sweep fails at 17 of 24 limits for the burning
+    /// strategy and 4 for the legitimate one, at 100,000 at 10 and 13 limits in 335,000-405,000, and passes from
+    /// 105,000 (D-20).
+    function test_F06_neverCostsTheSwapAtAnyGasLimit() public {
+        uint256 filled = _sweepGasLimits("legit");
+        assertGt(filled, 10, "precondition: the sweep includes limits where Aqua fills");
+
+        _shipAndRegister(address(new GasBurnExtruction()));
+        uint256 filledAfterBurn = _sweepGasLimits("burn");
+        assertEq(filledAfterBurn, 0, "a burning strategy never fills");
+    }
+
+    /// @dev Just below `AQUA_GAS_RESERVE + MIN_AQUA_GAS` the hook skips Aqua before `take` with `InsufficientGas`,
+    /// and the pool fills the whole swap. The limit is found by bisection: `lo` is the highest transaction gas limit
+    /// that skips, `hi = lo + 1` the lowest that does not. Gas handed down the call frames changes by 0 or 1 per unit,
+    /// so at `lo` the hook sees exactly one gas less than the threshold.
+    function test_F06_gasJustBelowThresholdSkipsWithInsufficientGas() public {
+        uint256 threshold = hook.AQUA_GAS_RESERVE() + hook.MIN_AQUA_GAS();
+        uint256 lo = 300_000; // the pool-only swap passes here (see the sweep test) and the hook is below the threshold
+        uint256 hi = 700_000; // a legitimate fill happens here
+
+        (bool okLo, bytes[] memory skipsLo,) = _hintedAtLimit(lo);
+        assertTrue(okLo && _isGasSkip(skipsLo), "precondition: 300,000 skips with InsufficientGas");
+        (bool okHi, bytes[] memory skipsHi, bool filledHi) = _hintedAtLimit(hi);
+        assertTrue(okHi && filledHi && skipsHi.length == 0, "precondition: 700,000 fills");
+
+        while (hi - lo > 1) {
+            uint256 mid = (lo + hi) / 2;
+            (, bytes[] memory skips,) = _hintedAtLimit(mid);
+            if (_isGasSkip(skips)) lo = mid;
+            else hi = mid;
+        }
+
+        // At `lo`: skipped with InsufficientGas, one gas under the threshold, and the pool-only result.
+        uint256 snap = vm.snapshotState();
+        BalanceDelta base = _swapWithGas(usdcForMumb(), -int256(SWAP_USDC), "", lo);
+        Snap memory baseAfter = _snap();
+        vm.revertToState(snap);
+
+        snap = vm.snapshotState();
+        Snap memory b = _snap();
+        vm.recordLogs();
+        BalanceDelta d = _swapWithGas(usdcForMumb(), -int256(SWAP_USDC), _hint(SWAP_USDC), lo);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        Snap memory a = _snap();
+        vm.revertToState(snap);
+
+        bytes[] memory reasons = _skips(logs);
+        assertEq(reasons.length, 1, "one AquaSkipped");
+        assertEq(
+            reasons[0],
+            abi.encodeWithSelector(ConfluenceHook.InsufficientGas.selector, threshold - 1),
+            "InsufficientGas, one gas under the threshold"
+        );
+        assertEq(BalanceDelta.unwrap(d), BalanceDelta.unwrap(base), "delta equals pool-only");
+        _assertSameState(a, baseAfter, "just below the threshold");
+        assertEq(a.priyaMumb, b.priyaMumb, "Priya wallet MUMB");
+        assertEq(a.priyaUsdc, b.priyaUsdc, "Priya wallet USDC");
+        (bool filled,,) = _findAquaFill(logs);
+        assertFalse(filled, "no AquaFill");
+        _assertHookClean();
+
+        // One gas more: the hook goes ahead. The router has less than a fill needs, so it fails inside the cap and
+        // the swap still passes through the pool.
+        (bool okAbove, bytes[] memory skipsAbove,) = _hintedAtLimit(hi);
+        assertTrue(okAbove, "the swap at the first limit that does not skip passes");
+        assertFalse(_isGasSkip(skipsAbove), "no InsufficientGas at the first limit that does not skip");
     }
 
     /// @dev A strategy whose Extruction reverts with 500,000 bytes. The hook keeps only the first
@@ -415,6 +496,77 @@ contract F06SafetyTest is ConfluenceBase {
             hookData
         );
         vm.stopPrank();
+    }
+
+    /// @dev One 1,000 USDC exact-input swap with `hookData` under a transaction gas limit of `limit`; false if it
+    /// reverted. Leaves its state changes in place on success.
+    function _tryAtLimit(uint256 limit, bytes memory hookData) internal returns (bool ok) {
+        vm.startPrank(trader);
+        IERC20(USDC).approve(address(swapRouter), type(uint256).max);
+        mumb.approve(address(swapRouter), type(uint256).max);
+        vm.stopPrank();
+
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: usdcForMumb(),
+            amountSpecified: -int256(SWAP_USDC),
+            sqrtPriceLimitX96: usdcForMumb() ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
+        });
+        PoolSwapTest.TestSettings memory settings =
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});
+        vm.prank(trader);
+        try swapRouter.swap{gas: limit}(key, params, settings, hookData) returns (BalanceDelta) {
+            ok = true;
+        } catch {}
+    }
+
+    /// @dev The hinted swap at `limit`, run from the current state, which it leaves unchanged: whether it passed,
+    /// the `AquaSkipped` reasons, and whether an `AquaFill` happened.
+    function _hintedAtLimit(uint256 limit) internal returns (bool ok, bytes[] memory skips, bool filled) {
+        uint256 snap = vm.snapshotState();
+        vm.recordLogs();
+        ok = _tryAtLimit(limit, _hint(SWAP_USDC));
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        vm.revertToState(snap);
+        skips = _skips(logs);
+        (filled,,) = _findAquaFill(logs);
+    }
+
+    /// @dev True if the only skip is `InsufficientGas`.
+    function _isGasSkip(bytes[] memory skips) internal pure returns (bool) {
+        return skips.length == 1 && bytes4(skips[0]) == ConfluenceHook.InsufficientGas.selector;
+    }
+
+    /// @dev The transaction gas limits of the sweep: 285,000 to 500,000 in steps of 5,000, then eight larger ones.
+    function _gasLimits() internal pure returns (uint256[] memory limits) {
+        uint256 n = (500_000 - 285_000) / 5_000 + 1;
+        limits = new uint256[](n + 8);
+        for (uint256 i; i < n; i++) {
+            limits[i] = 285_000 + i * 5_000;
+        }
+        uint256[8] memory high =
+            [uint256(550_000), 600_000, 700_000, 800_000, 1_000_000, 1_500_000, 2_000_000, 3_000_000];
+        for (uint256 i; i < 8; i++) {
+            limits[n + i] = high[i];
+        }
+    }
+
+    /// @dev At every limit where the pool-only swap passes, the hinted swap must pass. Returns at how many limits
+    /// the Aqua leg filled.
+    function _sweepGasLimits(string memory label) internal returns (uint256 filled) {
+        uint256[] memory limits = _gasLimits();
+        uint256 checked;
+        for (uint256 i; i < limits.length; i++) {
+            uint256 snap = vm.snapshotState();
+            bool poolOk = _tryAtLimit(limits[i], "");
+            vm.revertToState(snap);
+            if (!poolOk) continue; // the pool alone cannot do it, so there is nothing for Aqua to preserve
+            checked++;
+
+            (bool hintOk,, bool wasFilled) = _hintedAtLimit(limits[i]);
+            assertTrue(hintOk, string.concat(label, ": hinted swap reverted at gas limit ", vm.toString(limits[i])));
+            if (wasFilled) filled++;
+        }
+        assertGe(checked, 50, string.concat(label, ": precondition: the pool alone passes at (nearly) every limit"));
     }
 
     function _absDiff(uint160 x, uint160 y) internal pure returns (uint256) {
