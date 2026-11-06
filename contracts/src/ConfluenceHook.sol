@@ -94,6 +94,10 @@ contract ConfluenceHook is IHooks {
     /// before the call (`take`, `approve`) is not counted, so within that distance of the threshold the call can still
     /// run out of gas; that is caught like any other router failure and the pool fills the swap.
     uint256 public constant MIN_AQUA_GAS = 160_000;
+    /// @notice The most gas the hook forwards to the router, however much the transaction has: four times
+    /// `MIN_AQUA_GAS`, 640,000. `registerOrder` accepts any maker (D-18), so a registered strategy can burn all the
+    /// gas it is given; this bounds what a trader can lose to that, instead of the whole gas limit.
+    uint256 public constant MAX_AQUA_GAS = 4 * MIN_AQUA_GAS;
 
     /// @dev One active maker order per pool (D-09).
     mapping(PoolId => ISwapVM.Order) internal _orders;
@@ -229,12 +233,15 @@ contract ConfluenceHook is IHooks {
 
         // The router is what calls transferFrom on the taker (D-02), so it gets the approval, for exactly `a`.
         IERC20(tokenIn).forceApprove(router, a);
-        // The router gets all the gas except `AQUA_GAS_RESERVE`, so a revert or an out-of-gas inside it is caught here
-        // and the hook still has the gas to unwind and to let the rest of the swap run. Without the cap the 63/64 rule
-        // would leave only about 1/64 of the gas at each call level. Built first, so its cost is not in the cap.
+        // The router gets all the gas except `AQUA_GAS_RESERVE`, and never more than `MAX_AQUA_GAS`. The reserve means
+        // a revert or an out-of-gas inside the router is caught here and the hook still has the gas to unwind and to
+        // let the rest of the swap run; without it the 63/64 rule would leave only about 1/64 of the gas at each call
+        // level. The maximum bounds what a gas-burning strategy can cost the trader. Built first, so the taker data's
+        // cost is not in the cap.
         bytes memory takerData = _takerData();
         uint256 gasNow = gasleft();
         uint256 routerGas = gasNow > AQUA_GAS_RESERVE ? gasNow - AQUA_GAS_RESERVE : 0;
+        if (routerGas > MAX_AQUA_GAS) routerGas = MAX_AQUA_GAS;
         // Only `b` is used: the router's own check makes the amount in equal `a` (TakerTraits.sol:179).
         try ISwapVM(router).swap{gas: routerGas}(order, tokenIn, Currency.unwrap(currencyOut), a, takerData) returns (
             uint256, uint256 amountOut, bytes32

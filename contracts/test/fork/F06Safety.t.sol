@@ -33,7 +33,7 @@ contract GasBurnExtruction is IExtruction, IStaticExtruction {
     }
 }
 
-/// @notice Test-only Extruction target that reverts with 500,000 bytes of return data. The first 256 bytes are
+/// @notice Test-only Extruction target that reverts with 100,000 bytes of return data. The first 256 bytes are
 /// `0xdeadbeef` padded to a word, then the words 1 to 7; the rest is whatever is in memory. Not production code.
 contract ReturnBombExtruction is IExtruction, IStaticExtruction {
     function extruction(bool, uint256, SwapQuery calldata, SwapRegisters calldata, bytes calldata, bytes calldata)
@@ -52,7 +52,7 @@ contract ReturnBombExtruction is IExtruction, IStaticExtruction {
             mstore(0xa0, 5)
             mstore(0xc0, 6)
             mstore(0xe0, 7)
-            revert(0, 500000)
+            revert(0, 100000)
         }
     }
 }
@@ -245,6 +245,34 @@ contract F06SafetyTest is ConfluenceBase {
         assertEq(reasons[0].length, 0, "running out of gas leaves no revert data");
     }
 
+    /// @dev A strategy that burns all the gas it is given cannot burn more than the cap: the hook forwards at most
+    /// `4 * MIN_AQUA_GAS` to the router, however much gas the transaction has, so a registered strategy cannot make
+    /// a trader pay for their whole gas limit. At a 3,000,000 limit the swap with the burning strategy may cost at
+    /// most the pool-only swap plus the cap plus the hook's own work around the call.
+    function test_F06_burningStrategyCannotBurnMoreThanTheCap() public {
+        _shipAndRegister(address(new GasBurnExtruction()));
+        uint256 limit = 3_000_000;
+
+        uint256 snap = vm.snapshotState();
+        uint256 g0 = gasleft();
+        BalanceDelta base = _swapWithGas(usdcForMumb(), -int256(SWAP_USDC), "", limit);
+        uint256 poolOnlyUsed = g0 - gasleft();
+        vm.revertToState(snap);
+
+        g0 = gasleft();
+        BalanceDelta d = _swapWithGas(usdcForMumb(), -int256(SWAP_USDC), _hint(SWAP_USDC), limit);
+        uint256 burnUsed = g0 - gasleft();
+
+        assertEq(BalanceDelta.unwrap(d), BalanceDelta.unwrap(base), "same delta as pool-only");
+        emit log_named_uint("gas used, pool-only swap", poolOnlyUsed);
+        emit log_named_uint("gas used, swap with the gas-burning strategy", burnUsed);
+        emit log_named_uint("extra gas the burning strategy cost", burnUsed - poolOnlyUsed);
+        // The hook's own work around the router call (take, approve, call set-up, unwind, event) is about 106,000
+        // in `test_F05_fullAquaFill`'s trace (beforeSwap 258,598 less the router call's 152,432); 150,000 allows it.
+        assertEq(hook.MAX_AQUA_GAS(), 4 * hook.MIN_AQUA_GAS(), "the cap is four times the minimum fill");
+        assertLe(burnUsed - poolOnlyUsed, hook.MAX_AQUA_GAS() + 150_000, "burn is bounded by the cap");
+    }
+
     /// @dev The guarantee at every gas limit, not at one: wherever the pool alone passes, the swap with an Aqua hint
     /// passes too, for a legitimate fill and for a strategy that burns all its gas. Limits run from 285,000 (the
     /// pool-only swap needs under 290,000) to 3,000,000, 5,000 apart up to 500,000, where the hook's gas checks bite.
@@ -317,8 +345,9 @@ contract F06SafetyTest is ConfluenceBase {
         assertFalse(_isGasSkip(skipsAbove), "no InsufficientGas at the first limit that does not skip");
     }
 
-    /// @dev A strategy whose Extruction reverts with 500,000 bytes. The hook keeps only the first
-    /// `MAX_REASON_BYTES`, so the revert data cannot be used to run the swap out of gas.
+    /// @dev A strategy whose Extruction reverts with 100,000 bytes (a size that fits in the 640,000 gas the hook
+    /// forwards; at 500,000 bytes the router runs out of gas before it can revert with the data, which is also caught). The hook keeps only
+    /// the first `MAX_REASON_BYTES`, so the revert data costs the swap neither a large copy nor a large event.
     function test_F06_returnBombFallsBack() public {
         _shipAndRegister(address(new ReturnBombExtruction()));
 
