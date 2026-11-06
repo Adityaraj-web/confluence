@@ -5,7 +5,7 @@ import { group, hundredthsText, priceMovePercent, roundTo, signedHundredths } fr
 import type { GuardFile } from "../lib/types.ts";
 
 const DASH = "—";
-const H = 192;
+const H = 200;
 const TRACK = 104;
 
 /** What the axis draws, all derived from the raw skip reason bytes (decodeBandExceeded), never from the sentence. */
@@ -32,7 +32,7 @@ function Axis({ g }: { g: GuardFile | null }) {
   if (facts) for (let t = -range; t <= range + 1e-9; t += facts.bandPct) ticks.push(Math.round(t * 100) / 100);
   const tickText = (t: number) => `${t > 0 ? "+" : t < 0 ? "-" : ""}${Math.abs(t)}%`;
   const mx = facts ? x(facts.markerPct) : 0;
-  const anchor = facts && mx > w - 140 ? "end" : facts && mx < 140 ? "start" : "middle";
+  const anchor = facts && mx > w - 240 ? "end" : facts && mx < 240 ? "start" : "middle"; // the longest caption is about 440px wide
   const fillText = facts ? `${facts.fill < 0n ? "-" : "+"}${hundredthsText(facts.fill)}` : "";
 
   return (
@@ -78,11 +78,14 @@ function Axis({ g }: { g: GuardFile | null }) {
           <g>
             <line x1={mx} x2={mx} y1={TRACK - 32} y2={TRACK + 32} stroke="var(--bad)" strokeWidth={4} />
             <path d={`M ${mx} ${TRACK - 44} l 8 8 h -16 z`} fill="var(--bad)" />
-            <text x={mx} y={TRACK - 56} textAnchor={anchor} className="text-body tabular-nums" fill="var(--bad)">
-              Priya's fill {fillText}
+            <text x={mx} y={TRACK - 78} textAnchor={anchor} className="text-body tabular-nums" fill="var(--bad)">
+              Priya would sell MUMB {hundredthsText(facts.fill)} {facts.fill >= 0n ? "cheaper" : "dearer"} than the pool
             </text>
-            <text x={mx} y={TRACK + 56} textAnchor={anchor} className="text-cap tabular-nums" fill="var(--bad)">
-              {hundredthsText(facts.outside)} outside the band
+            <text x={mx} y={TRACK - 56} textAnchor={anchor} className="text-cap tabular-nums" fill="var(--bad)">
+              {fillText}
+            </text>
+            <text x={mx} y={TRACK + 80} textAnchor={anchor} className="text-cap tabular-nums" fill="var(--bad)">
+              {hundredthsText(facts.outside)} beyond the ±{hundredthsText(BigInt(facts.band.bandBps))} band: refused
             </text>
           </g>
         )}
@@ -171,8 +174,10 @@ export function Guard(props: { guard: GuardFile | null; running: boolean; locked
       </div>
 
       <section aria-label="Price axis" className="rounded-lg border border-line p-24">
-        <h2 className="text-cap font-medium">Priya's fill price against the pool price (MUMB per USDC)</h2>
-        <div className="mt-16">
+        <h2 className="text-cap font-medium">
+          Priya's fill price against the pool price <span className="font-normal text-muted">(MUMB per USDC)</span>
+        </h2>
+        <div className="mt-8">
           <Axis g={g} />
         </div>
       </section>
