@@ -54,3 +54,23 @@ test("test_F10_legsFromLogsEqualsScripts", () => {
   assert.deepEqual(legsFromLogs([fakeLog(HOOK, fillTopics, fillData)], HOOK), { fill: { amountIn: 550_000_000n, amountOut: 545n } });
   assert.throws(() => legsFromLogs([fakeLog(HOOK, fillTopics, fillData), fakeLog(HOOK, fillTopics, fillData)], HOOK), /more than one AquaFill/);
 });
+
+// ---- guardChecks copy ----
+import { guardChecks as scriptsGuardChecks, type RunRecord as ScriptsRun } from "../../scripts/src/demo.ts";
+import { guardChecks } from "../src/lib/guard.ts";
+import { readFileSync } from "node:fs";
+import { runFromJson } from "../src/lib/engine.ts";
+import type { RunFile } from "../src/lib/types.ts";
+
+test("test_F10_guardChecksEqualsScripts", () => {
+  const fx = JSON.parse(readFileSync(new URL("./fixtures/run-1000.json", import.meta.url), "utf8")) as RunFile;
+  const pool = runFromJson(fx.poolOnly, "p");
+  const split = runFromJson(fx.split, "s");
+  const skipped = { ...pool, skipped: exceeded(1_031_400n, 1_000_000n, 200) };
+  const otherSkip = { ...pool, skipped: encodeErrorResult({ abi: confluenceHookAbi, errorName: "NoOrder" }) };
+  for (const r of [pool, split, skipped, otherSkip]) {
+    assert.deepEqual(guardChecks(r, 1_000_000_000n), scriptsGuardChecks(r as unknown as ScriptsRun, 1_000_000_000n));
+  }
+  assert.ok(guardChecks(skipped, 1_000_000_000n).every(([ok]) => ok), "a PoolPriceBandExceeded skip with Priya untouched passes all five");
+  assert.equal(guardChecks(otherSkip, 1_000_000_000n)[2]![0], false);
+});
