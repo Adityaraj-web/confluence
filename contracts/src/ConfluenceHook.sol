@@ -43,6 +43,8 @@ contract ConfluenceHook is IHooks {
     error NoOrder();
     /// @dev A hook callback this contract does not implement.
     error HookNotImplemented();
+    /// @dev `registerOrder` was given an `order.data` of `length` bytes, more than `max` (`MAX_ORDER_DATA_BYTES`).
+    error OrderDataTooLarge(uint256 length, uint256 max);
 
     // F06 skip reasons. These are never thrown: their encodings are the `reason` of `AquaSkipped` when the hook
     // skips the Aqua leg before calling the router. A router revert is reported with the router's own revert data.
@@ -98,6 +100,13 @@ contract ConfluenceHook is IHooks {
     /// `MIN_AQUA_GAS`, 640,000. `registerOrder` accepts any maker (D-18), so a registered strategy can burn all the
     /// gas it is given; this bounds what a trader can lose to that, instead of the whole gas limit.
     uint256 public constant MAX_AQUA_GAS = 4 * MIN_AQUA_GAS;
+
+    /// @notice The longest `order.data`, in bytes, that `registerOrder` accepts.
+    /// @dev Priya's order measures 118 bytes (6 fee + 2 curve + 110 Extruction); this is four times that (472)
+    /// rounded up to 512, which leaves room for a richer program. `beforeSwap` copies the stored order out of storage
+    /// on every hinted swap before its gas check and the capped router call, so an unbounded `data` could run a
+    /// hinted swap out of gas where a pool-only swap would pass (D-20).
+    uint256 public constant MAX_ORDER_DATA_BYTES = 512;
 
     /// @dev One active maker order per pool (D-09).
     mapping(PoolId => ISwapVM.Order) internal _orders;
