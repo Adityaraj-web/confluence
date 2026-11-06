@@ -74,3 +74,16 @@ test("test_F10_guardChecksEqualsScripts", () => {
   assert.ok(guardChecks(skipped, 1_000_000_000n).every(([ok]) => ok), "a PoolPriceBandExceeded skip with Priya untouched passes all five");
   assert.equal(guardChecks(otherSkip, 1_000_000_000n)[2]![0], false);
 });
+
+test("test_F10_guardFileNumbersFromDecodeBandExceeded", async () => {
+  // The recorded guard run: the numbers the Guard screen draws come from the raw reason bytes, not from the sentence.
+  const { signedPercent, hundredthsText } = await import("../src/lib/format.ts");
+  const g = JSON.parse(readFileSync(new URL("../public/runs/guard-1000.json", import.meta.url), "utf8")) as import("../src/lib/types.ts").GuardFile;
+  const band = decodeBandExceeded(g.hinted.skipped!);
+  assert.ok(band);
+  assert.equal(band.bandBps, 200);
+  assert.equal(hundredthsText(BigInt(band.bandBps)), "2.00%");
+  // exec is MUMB per USDC (the band's own unit): Priya's stale price is 3.14% above the pool's after the move.
+  assert.equal(signedPercent(band.exec - band.pool, band.pool), "+3.14%");
+  assert.ok(g.hinted.skipReason.includes("fill price 3.14% off the pool price, band 2.00%"));
+});

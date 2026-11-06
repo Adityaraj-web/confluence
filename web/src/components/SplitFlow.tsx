@@ -17,8 +17,8 @@ const T = 64;
 const STACK_TOP = H / 2 - T / 2; // 84
 const AQUA_LANE = 56;
 const POOL_LANE = 176;
-const LEFT_LABEL = 184; // room for "1,000 USDC" at 28px mono
-const OUT_LABEL = 256; // room for "1,972.318 MUMB" (about 205px at 28px mono + 18px sans)
+const LEFT_LABEL = 136; // room for "2,000 USDC" at 18px
+const OUT_LABEL = 176; // room for "1,972.318 MUMB" at 18px
 const FLAT = 16;
 
 function ribbon(xa: number, xb: number, t: number, laneC: number, stackTop: number): string {
@@ -80,7 +80,6 @@ export function SplitFlow({ data }: { data: FlowData | null }) {
   const xb = w - OUT_LABEL;
   const mid = (xa + xb) / 2;
   const opacity = idle ? 0.16 : 0.92;
-  const label = (v: string | undefined, fallback: string) => (idle ? fallback : v);
 
   const desc = idle
     ? "Split flow, idle: the swap divides between Priya's Aqua strategy and the v4 pool curve and merges into the MUMB out."
@@ -96,23 +95,32 @@ export function SplitFlow({ data }: { data: FlowData | null }) {
           <path d={ribbon(xa, xb, tp, POOL_LANE, STACK_TOP + ta)} fill="var(--pool)" opacity={opacity} />
         )}
 
-        {/* left: what the trader pays */}
-        <text x={0} y={H / 2 + 10} className="fill-fg font-mono text-big tabular-nums" opacity={idle ? 0.35 : 1}>
-          {label(`${data?.usdcIn} USDC`, "USDC")}
-        </text>
-        {/* right: what the trader gets */}
-        <text x={xb + 16} y={H / 2 + 10} className="fill-fg font-mono text-big tabular-nums" opacity={idle ? 0.35 : 1}>
-          {idle ? (
-            "MUMB"
-          ) : (
-            <>
+        {/* ends: same size as the lane labels (18px) */}
+        {idle ? (
+          <>
+            <text x={0} y={H / 2 + 6} className="fill-muted text-body" opacity={0.5}>
+              USDC
+            </text>
+            <text x={xb + 16} y={H / 2 + 6} className="fill-muted text-body" opacity={0.5}>
+              MUMB
+            </text>
+            <text x={mid} y={H / 2 + 6} textAnchor="middle" className="fill-muted text-body">
+              Press Space or Run both
+            </text>
+          </>
+        ) : (
+          <>
+            <text x={0} y={H / 2 + 6} className="fill-fg text-body tabular-nums">
+              {data.usdcIn} USDC
+            </text>
+            <text x={xb + 16} y={H / 2 + 6} className="fill-fg text-body tabular-nums">
               {data.out}
-              <tspan className="fill-muted font-sans text-body" dx="8">
+              <tspan className="fill-muted" dx="8">
                 MUMB
               </tspan>
-            </>
-          )}
-        </text>
+            </text>
+          </>
+        )}
 
         {/* lane labels: colour plus words, never colour alone */}
         <text x={mid} y={AQUA_LANE - ta / 2 - 12} textAnchor="middle" className="text-body tabular-nums" fill="var(--aqua)" opacity={idle ? 0.5 : 1}>

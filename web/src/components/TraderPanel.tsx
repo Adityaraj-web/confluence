@@ -17,10 +17,12 @@ export function TraderPanel(props: {
   free: boolean;
   valid: boolean;
   phase: Phase | null;
+  /** Another action (the guard) holds the lock. */
+  locked?: boolean;
   onRun: (v: RunView) => void;
 }) {
-  const { amount, onAmount, presets, free, valid, phase, onRun } = props;
-  const busy = phase !== null;
+  const { amount, onAmount, presets, free, valid, phase, locked = false, onRun } = props;
+  const busy = phase !== null || locked;
   const click = (v: RunView) => (e: React.MouseEvent<HTMLButtonElement>) => {
     e.currentTarget.blur();
     onRun(v);
@@ -90,12 +92,12 @@ export function TraderPanel(props: {
         >
           {phase ? PHASE_TEXT[phase] : "Run both"}
         </button>
-        <div className="flex justify-between">
+        <div className="flex flex-col gap-8">
           <button
             type="button"
             disabled={busy || !valid}
             onClick={click("pool")}
-            className="h-40 px-8 text-body text-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-40 rounded-lg border border-line px-8 text-body text-muted transition-colors hover:border-muted hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
           >
             Pool only
           </button>
@@ -103,7 +105,7 @@ export function TraderPanel(props: {
             type="button"
             disabled={busy || !valid}
             onClick={click("split")}
-            className="h-40 px-8 text-body text-muted transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-40 rounded-lg border border-line px-8 text-body text-muted transition-colors hover:border-muted hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
           >
             CONFLUENCE
           </button>
@@ -111,7 +113,7 @@ export function TraderPanel(props: {
       </div>
 
       <p className="mt-auto text-cap text-muted">
-        <span className="font-mono">Space</span> runs · <span className="font-mono">1</span>–<span className="font-mono">3</span> screens
+        Space runs · keys 1-4 switch tabs
       </p>
     </aside>
   );

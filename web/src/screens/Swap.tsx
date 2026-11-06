@@ -120,9 +120,7 @@ export function Swap({ result }: { result: SwapResult | null }) {
                 {f.split.skipReason ? ` · Aqua leg skipped: ${f.split.skipReason}` : ""}
               </>
             )
-          ) : (
-            "Press Space or Run both"
-          )}
+          ) : null}
         </p>
         <SplitFlow data={flow} />
       </div>

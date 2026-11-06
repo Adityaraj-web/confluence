@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { avgPrice as scriptsAvgPrice, priceMovePercent as scriptsMove } from "../../scripts/src/demo.ts";
-import { avgPrice, formatGain, group, priceMovePercent, roundTo, usdcPerMumb } from "../src/lib/format.ts";
+import { avgPrice, formatGain, group, hundredthsText, moveHundredths, priceMovePercent, roundTo, signedPercent, signedRound, usdcPerMumb } from "../src/lib/format.ts";
 import type { RunFile } from "../src/lib/types.ts";
 
 const fx = JSON.parse(readFileSync(new URL("./fixtures/run-1000.json", import.meta.url), "utf8")) as RunFile;
@@ -72,4 +72,23 @@ test("test_F10_groupKeepsTheFraction", () => {
   assert.equal(group("1000"), "1,000");
   assert.equal(group("1234567.25"), "1,234,567.25");
   assert.equal(group("-1234.5"), "-1,234.5");
+});
+
+test("test_F10_signedPercentAndRound", () => {
+  assert.equal(signedPercent(31_400n, 1_000_000n), "+3.14%");
+  assert.equal(signedPercent(-31_400n, 1_000_000n), "-3.14%");
+  assert.equal(signedPercent(0n, 1_000_000n), "0.00%");
+  assert.equal(hundredthsText(200n), "2.00%");
+  assert.equal(hundredthsText(-5n), "0.05%");
+  assert.equal(signedRound(1000n, 1550n, 3, 0), "+1");
+  assert.equal(signedRound(1_000_000_000_000_000_000_000_000n, 999_454_640_478_933_766_690_354n, 18, 3), "-545.360");
+  assert.equal(signedRound(5n, 5n, 6, 2), "0");
+});
+
+test("test_F10_moveHundredthsEqualsPriceMovePercent", () => {
+  const b = big(fx.poolOnly.before.sqrtPrice);
+  for (const run of [fx.poolOnly, fx.split]) {
+    const a = big(run.after.sqrtPrice);
+    assert.equal(hundredthsText(moveHundredths(b, a)), priceMovePercent(b, a));
+  }
 });

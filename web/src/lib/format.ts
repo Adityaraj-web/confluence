@@ -65,12 +65,33 @@ export function trunc(decimal: string, dp: number): string {
   return `${neg ? "-" : ""}${grouped}${dp > 0 ? `.${frac}` : ""}`;
 }
 
-/** Signed delta text for a before/after pair: "+0.550" / "-545.360" / "0". */
-export function signedDelta(before: bigint, after: bigint, decimals: number, dp: number): string {
+/** Signed, rounded change of a token amount: "+550.00" / "-545.360" / "0". Rounds to nearest like roundTo. */
+export function signedRound(before: bigint, after: bigint, decimals: number, dp: number): string {
   const d = after - before;
   if (d === 0n) return "0";
-  const text = trunc(formatUnits(d < 0n ? -d : d, decimals), dp);
-  return `${d < 0n ? "-" : "+"}${text}`;
+  return `${d < 0n ? "-" : "+"}${roundTo(d < 0n ? -d : d, decimals, dp)}`;
+}
+
+/** `diff / base` in hundredths of a percent, signed, truncated toward zero: signedHundredths(31400n, 1000000n) = 314n. */
+export const signedHundredths = (diff: bigint, base: bigint): bigint => (diff * 10_000n) / base;
+
+/** Hundredths of a percent as text, unsigned: 314n -> "3.14%". */
+export function hundredthsText(h: bigint): string {
+  const a = h < 0n ? -h : h;
+  return `${a / 100n}.${(a % 100n).toString().padStart(2, "0")}%`;
+}
+
+/** "+3.14%" / "-3.14%" / "0.00%": the signed difference of two values as a share of the base. */
+export function signedPercent(diff: bigint, base: bigint): string {
+  const h = signedHundredths(diff, base);
+  return h === 0n ? "0.00%" : `${h < 0n ? "-" : "+"}${hundredthsText(h)}`;
+}
+
+/** The size of priceMovePercent in hundredths of a percent (for bar lengths). Same maths, as a number instead of text. */
+export function moveHundredths(sqrtBefore: bigint, sqrtAfter: bigint): bigint {
+  const before = sqrtBefore * sqrtBefore;
+  const after = sqrtAfter * sqrtAfter;
+  return ((after > before ? after - before : before - after) * 10_000n) / before;
 }
 
 /** Groups the integer part with commas and keeps the fraction as is: "1234.5" -> "1,234.5". */

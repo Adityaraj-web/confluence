@@ -33,11 +33,10 @@ export function TopBar(props: {
           <Mark />
           <span className="text-body font-semibold">CONFLUENCE</span>
         </div>
-        <p className="min-w-0 flex-1 truncate text-body text-muted">
+        <p className="min-w-0 flex-1 truncate text-body tabular-nums text-muted">
           {h ? (
             <>
-              MUMB/USDC · fee {(h.pool.fee / 10_000).toFixed(2)}% · 1 MUMB ={" "}
-              <span className="font-mono tabular-nums">{trunc(h.usdcPerMumb, 4)}</span> USDC · band ±
+              MUMB/USDC · fee {(h.pool.fee / 10_000).toFixed(2)}% · 1 MUMB = {trunc(h.usdcPerMumb, 4)} USDC · band ±
               {(h.pool.bandBps / 100).toFixed(2)}%
             </>
           ) : (
