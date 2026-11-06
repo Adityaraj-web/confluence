@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "fork": {
+    "block": 26349400
+  },
+  "pool": {
+    "fee": 3000,
+    "tickSpacing": 60,
+    "bandBps": 200,
+    "feeE9": 3000000,
+    "usdcIsCurrency0": true
+  },
+  "addresses": {
+    "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "mumb": "0xC717f7Ae74836d48d64CBb9349FFa49Ad3E1241A",
+    "hook": "0x35606ef2F16633Df8B30aDC41e646DEFC9178088",
+    "band": "0x878dcE26F41cAaA0B20b3280B1a83AA33339d63f",
+    "poolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+    "aqua": "0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a",
+    "swapVmRouter": "0x111111338c5091E8440b67B168bAe16a668AC0De"
+  },
+  "runs": [
+    {
+      "file": "usdc-to-mumb-500.json",
+      "dir": "usdc-to-mumb",
+      "amount": "500"
+    },
+    {
+      "file": "usdc-to-mumb-1000.json",
+      "dir": "usdc-to-mumb",
+      "amount": "1000"
+    },
+    {
+      "file": "usdc-to-mumb-2000.json",
+      "dir": "usdc-to-mumb",
+      "amount": "2000"
+    }
+  ],
+  "guard": {
+    "file": "guard-1000.json",
+    "amount": "1000"
+  }
+}
