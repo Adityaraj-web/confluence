@@ -13,7 +13,7 @@ A MUMB/USDC v4 pool with our hook attached, a seed position, and pool-only swaps
 - `contracts/test/fork/F04PoolSkeleton.t.sol`
 
 ## Behaviour
-- Hook extends v4-periphery `BaseHook`; permissions `beforeSwap` and `beforeSwapReturnDelta` only.
+- Hook implements `IHooks` directly, because v4-periphery in `lib/` has no `BaseHook` (D-17); permissions `beforeSwap` and `beforeSwapReturnDelta` only.
 - Address mined with `HookMiner`, deployed with CREATE2.
 - `registerOrder` / `unregisterOrder` and storage per `poolId` as in ARCHITECTURE section 6 (the order type comes from SwapVM; F04 may store it without using it).
 - `beforeSwap` returns a zero delta and zero fee override for now.
