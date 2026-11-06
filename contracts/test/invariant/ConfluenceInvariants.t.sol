@@ -21,8 +21,8 @@ import {ConfluenceHandler} from "./handlers/ConfluenceHandler.sol";
 /// stays fast (PROGRESS records the final numbers). `fail-on-revert` makes any reverting handler call a failure:
 /// Aqua must never make a v4 swap fail (CLAUDE.md hard rule).
 ///
-/// forge-config: default.invariant.runs = 32
-/// forge-config: default.invariant.depth = 25
+/// forge-config: default.invariant.runs = 64
+/// forge-config: default.invariant.depth = 50
 /// forge-config: default.invariant.fail-on-revert = true
 contract ConfluenceInvariantsTest is ConfluenceBase {
     ConfluenceHandler internal handler;
@@ -164,6 +164,14 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
         assertEq(handler.hintedSwaps(), 2);
         assertEq(handler.swapCalls(), 2);
         _assertHookHoldsNothing();
+
+        // The value invariant is not 0 == 0 here: the one fill moved Priya's wallet and her virtual balance by the
+        // same non-zero amounts (MUMB out of her wallet, USDC in).
+        (int256 walletMumb, int256 virtualMumb, int256 walletUsdc, int256 virtualUsdc) = handler.makerValue();
+        assertLt(walletMumb, 0, "Priya's MUMB wallet did not go down");
+        assertGt(walletUsdc, 0, "Priya's USDC wallet did not go up");
+        assertEq(walletMumb, virtualMumb);
+        assertEq(walletUsdc, virtualUsdc);
     }
 
     // ---------------------------------------------------------------- fuzz
@@ -206,11 +214,12 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
     function testFuzz_F08_fullAquaFillAnchorRecovers(uint256 sizeSeed, bool usdcIn) public {
         bool zeroForOne = usdcIn ? usdcForMumb() : mumbForUsdc();
         uint256 unit = usdcIn ? 1e6 : 1e18;
-        uint256 size = bound(sizeSeed, 300 * unit, 1_000 * unit);
+        // 100 to 400 units: small enough that the band admits several fills before it refuses (each one moves
+        // Priya's price about 2 * size / 100,000; the band is 2%).
+        uint256 size = bound(sizeSeed, 100 * unit, 400 * unit);
         uint160 startPrice = _snap().sqrtPriceX96;
 
-        // Fill 100% from Aqua until the band refuses. A fill of up to about 2,000 units passes the band the first
-        // time (ARCHITECTURE section 5), so at least one fill happens.
+        // Fill 100% from Aqua until the band refuses ("many" fills: at least two are required below).
         uint256 fills;
         bool refused;
         for (uint256 i; i < 40 && !refused; i++) {
@@ -228,7 +237,7 @@ contract ConfluenceInvariantsTest is ConfluenceBase {
             }
         }
         assertTrue(refused, "the band never refused a fill");
-        assertGe(fills, 1, "no fill before the band refused");
+        assertGe(fills, 2, "fewer than two fills before the band refused");
         assertEq(_snap().sqrtPriceX96, startPrice, "a 100% hint moved the pool price");
         _assertHookHoldsNothing();
 
