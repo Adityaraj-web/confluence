@@ -54,3 +54,10 @@ Entry format:
 - Decisions: none recorded yet. Team approved `InvalidArgsLength`, `InvalidBand` in `build` as well as `parse`, and the ARCHITECTURE corrections; D-16 and the edits land when F03 is finished.
 - Next: implement the contract, checking in this order: parse and band validity, token match, `getSlot0`, not-computed, price maths, band check.
 - Open issues: the skeleton gives 4 temporary compiler warnings in our file; the implementation removes them.
+
+## 2026-11-06 11:05 IST · F03 · T2 · Done
+- Changed: contracts/src/PoolPriceBandExtruction.sol, contracts/test/unit/F03PoolPriceBand.t.sol, contracts/test/fork/F03BandOnFork.t.sol, contracts/test/base/StrategyLib.sol (`_buildBandProgram`; `_buildProgram` unchanged), docs (ARCHITECTURE, DECISIONS, FEATURES, PROGRESS).
+- Verified: `forge test --match-test test_F03 -vvv` -> 18 passed (9 acceptance, 9 extra); `forge test` -> 28 passed; no warnings in our files. 12 deliberately injected contract bugs, run against the unit tests on a scratch copy, each failed at least one test. `spec-reviewer` ran before the implementation existed, against its own reference contract; its 3 coverage gaps are closed. It has not reviewed the final contract.
+- Decisions: D-16 added (`InvalidArgsLength`, `InvalidBand` in `build`, the [VERIFY] answers).
+- Next: F04 (T1), then F05 (both). F05's `ConfluenceBase` uses `band.build(manager, key, bandBps)` and `_buildBandProgram(feeE9, address(band), args)`. Hour-8 gate: F03 is one of F05's two dependencies, and running the router inside `beforeSwap` is still unproven until `test_F05_fullAquaFill`.
+- Open issues: (1) Repeat fills: a second 1,000 USDC fill in the same direction is about 2.9% off at a 200 bps band and is refused unless the pool moves, so F07 and F08 must expect it. (2) The band follows `slot0`, so on a thin pool someone can cheaply push the price towards Priya's stale curve and then fill her; discuss before the pitch claims stale-price protection. (3) ARCHITECTURE section 3 step 9 keeps its [VERIFY] tag, which belongs to F04.

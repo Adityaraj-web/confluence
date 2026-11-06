@@ -47,9 +47,9 @@ Addresses (keep in sync with `.env`):
 2. PoolManager opens the unlock session and calls `ConfluenceHook.beforeSwap`.
 3. Hook checks: exact input? an order registered for this pool? `a > 0` and `a <= |amountSpecified|`? If not, return a zero delta (pool-only).
 4. Hook calls `poolManager.take(USDC, hook, a)`: the hook now holds `a` USDC and owes it to the PoolManager's books.
-5. Hook approves the contract that will `transferFrom` it (the router, per SwapVM v1.0.2 source [VERIFY in F02]) for `a` USDC.
-6. Hook calls the canonical router's `swap(order, tokenIn, tokenOut, a, takerTraitsAndData)` inside try/catch (5-argument v1.0.2 signature [VERIFY in F02]), with taker traits: exact input, `useTransferFromAndAquaPush = true`, `threshold` = minimum MUMB out, recipient = hook.
-7. The router runs Priya's program: fee, then the curve computes `b`, then the Extruction step calls `PoolPriceBandExtruction.extruction(...)`. It reads the pool's `sqrtPriceX96` and reverts if the execution price `a`/`b` is outside the band. If it passes, Aqua pulls `b` MUMB from Priya's wallet to the hook; the router pulls `a` USDC from the hook and pushes it into Priya's Aqua balance.
+5. Hook approves the router, the contract that calls `transferFrom` on the taker (D-02), for `a` USDC.
+6. Hook calls the canonical router's `swap(order, tokenIn, tokenOut, a, takerTraitsAndData)` inside try/catch (the 5-argument v1.0.2 signature, D-04), with taker traits: exact input, `useTransferFromAndAquaPush = true`, `threshold` = minimum MUMB out, recipient = hook.
+7. The router runs Priya's program. The flat fee takes its cut and runs the rest of the program inside itself, so the curve computes `b` from `a` net of the fee. The Extruction step then calls `PoolPriceBandExtruction.extruction(...)`, which reads the pool's `sqrtPriceX96` and reverts if the execution price, net input over `b`, is outside the band (D-15). If it passes, Aqua pulls `b` MUMB from Priya's wallet to the hook; the router pulls `a` USDC from the hook and pushes it into Priya's Aqua balance.
 8. Hook settles `b` MUMB into the PoolManager (`sync`, transfer, `settle`).
 9. Hook returns `BeforeSwapDelta(specified = +a, unspecified = -b)`: "I consumed `a` of the input and provided `b` of the output." [VERIFY sign convention against v4's custom-accounting tests in F04.]
 10. Pool curve swaps the remaining `1,000 - a` USDC against the seed position.
@@ -68,23 +68,23 @@ Why the band does not move during steps 6-7: the pool curve only runs after `bef
 
 ## 5. PoolPriceBandExtruction
 
-How Extruction works (swap-vm v1.0.2, `src/instructions/Extruction.sol`; opcode index 32 on the canonical router per 1inch docs [VERIFY in `AquaOpcodes._opcodes()`]):
-- The program's Extruction step carries `target (20 bytes) | extructionArgs (N bytes)`. The router calls `target.extruction(isStaticContext, nextPC, query, swap, extructionArgs, takerData)`.
+How Extruction works (swap-vm v1.0.2, `src/instructions/Extruction.sol`; opcode index 32 on the canonical router, D-16):
+- The program's Extruction step is `opcode (1 byte) | argsLength (1 byte) | target (20 bytes) | extructionArgs (N bytes)`, where `argsLength` covers the target and the args, so at most 255 bytes. The router calls `target.extruction(isStaticContext, nextPC, query, swap, extructionArgs, takerData)`.
 - `query` (`SwapQuery`): orderHash, maker, taker, tokenIn, tokenOut, isExactIn. `swap` (`SwapRegisters`): balanceIn, balanceOut, amountIn, amountOut, amountNetPulled.
 - It returns `(updatedNextPC, choppedLength, updatedSwap)`, and the router writes those back. A revert in the target reverts the quote or swap.
 - `quote()` calls it through `IStaticExtruction` (STATICCALL); `swap()` calls it through `IExtruction` (CALL). Both share one selector, so one `view` function serves both.
 - 1inch's two hard rules: the target is non-upgradeable, and quote and swap return identical amounts for the same inputs.
 
 Our target:
-- `extructionArgs`, packed and fixed in the strategy: `poolManager (20) | currency0 (20) | currency1 (20) | fee (3) | tickSpacing (3) | hooks (20) | bandBps (2)` = 88 bytes. A `build`/`parse` pair in the contract (or a library beside it) encodes and decodes this.
+- `extructionArgs`, packed and fixed in the strategy: `poolManager (20) | currency0 (20) | currency1 (20) | fee (3) | tickSpacing (3) | hooks (20) | bandBps (2)` = 88 bytes. A `build`/`parse` pair in the contract encodes and decodes this. `parse` reverts `InvalidArgsLength` unless the args are exactly 88 bytes; both revert `InvalidBand` if `bandBps` is 0 or above 10,000. `extruction` parses first, so hand-built strategy bytes get the same checks.
 - Computes `poolId = keccak256(abi.encode(poolKey))` from those fields, so the args cannot name a pool whose tokens differ from the swap. Reverts `PoolTokenMismatch` unless `{tokenIn, tokenOut} == {currency0, currency1}`.
 - Reads `sqrtPriceX96` with v4's `StateLibrary.getSlot0(poolManager, poolId)` (a view `extsload`). Reverts `PoolNotInitialized` if it is 0.
+- Reverts `PoolPriceBandNotComputed` if `amountIn == 0` or `amountOut == 0`. This catches a program that puts the step before the curve. It comes before the price maths, which divides by one of these registers.
 - Pool price as currency1 per currency0, Q96-scaled: `poolX96 = FullMath.mulDiv(sqrtPriceX96, sqrtPriceX96, 2^96)`.
-- Execution price from the registers, oriented the same way: if `tokenIn == currency0`, `execX96 = mulDiv(amountOut, 2^96, amountIn)`; otherwise `execX96 = mulDiv(amountIn, 2^96, amountOut)`.
-- Reverts `PoolPriceBandNotComputed` if `amountIn == 0` or `amountOut == 0`. This catches a program that puts the step before the curve.
-- Reverts `PoolPriceBandExceeded(execX96, poolX96, bandBps)` if `|execX96 - poolX96| * 10_000 > bandBps * poolX96`.
+- Execution price from the registers, oriented the same way: if `tokenIn == currency0`, `execX96 = mulDiv(amountOut, 2^96, amountIn)`; otherwise `execX96 = mulDiv(amountIn, 2^96, amountOut)`. Inside a flat fee, the `amountIn` register is net of the fee for both exact input and exact output, so the band checks Priya's curve price, not the taker's gross price (D-15).
+- Reverts `PoolPriceBandExceeded(execX96, poolX96, bandBps)` if `|execX96 - poolX96| * 10_000 > bandBps * poolX96`, computed as `diff > mulDiv(poolX96, bandBps, 10_000)`, which gives the same result and cannot overflow.
 - Returns `(nextPC, 0, swap)` unchanged. It is a pure guard: it never writes amounts, consumes no taker data and never jumps.
-- `bandBps` must exceed Priya's fee plus her curve's slippage for the sizes she wants to fill, or every fill is refused. The demo uses 30 bps fee and 200 bps band.
+- `bandBps` must exceed Priya's curve slippage for the sizes she wants to fill, or those fills are refused. The fee does not use up band width: a taker's gross price can sit up to one fee beyond the band, on the side that favours Priya. The demo uses 30 bps fee and 200 bps band. With 100,000 of each token shipped and the pool at her curve's price, that admits a single fill of up to about 2,047 USDC or 2,006 MUMB. A second 1,000 USDC fill in the same direction is about 2.9% off and is refused unless the pool price has moved too.
 - Because the parameters live in the strategy bytes, any maker can point any strategy at this one deployed contract for any v4 pool. That reuse is part of the 1inch pitch.
 
 ## 6. ConfluenceHook interface (names and behaviour; no code here)
