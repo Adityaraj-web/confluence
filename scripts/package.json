@@ -5,6 +5,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/quoter.test.ts",
+    "test:int": "node --import tsx --test test/quoter.live.test.ts",
     "abis": "tsx src/abis/generate.ts",
     "quote": "tsx src/quoter.ts"
   },
