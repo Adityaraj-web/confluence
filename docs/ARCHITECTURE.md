@@ -55,7 +55,11 @@ Addresses (keep in sync with `.env`):
 10. Pool curve swaps the remaining `1,000 - a` USDC against the seed position.
 11. Swap router settles with the PoolManager; trader receives the total MUMB; PoolManager checks all deltas are zero.
 
-If step 6 reverts for any reason (band breached, strategy docked, balance short), the hook has not settled anything yet. It returns the `a` USDC to the PoolManager with `settle` and returns a zero delta, so the pool fills everything. Design of this unwind is F06.
+If step 6 reverts for any reason (band breached, strategy docked, maker's wallet short, maker's approval revoked, lock re-entry, out of gas), everything the router did is undone with it, so the hook holds exactly the `a` it took in step 4 and has settled nothing. It resets the approval, returns the `a` to the PoolManager (`sync`, transfer, `settle`), emits `AquaSkipped(poolId, reason)` with the router's revert data (the first 256 bytes), and returns a zero delta, so the pool fills everything (F06, D-20). Only the router call is inside the try/catch.
+
+The hook also skips Aqua before step 4, with the same event, when a swap asked for an Aqua leg (a non-zero 32-byte hint) and: it is exact output; the hint exceeds the swap amount or does not fit an `int128`; no order is registered; the PoolManager holds less of the input token than the hint; or `gasleft()` is below `AQUA_GAS_RESERVE + MIN_AQUA_GAS` (310,000). A swap with no hint, a hint of 0 or `hookData` of any other length is pool-only and silent.
+
+Gas: the router gets `min(gasleft - AQUA_GAS_RESERVE, MAX_AQUA_GAS)`, that is at most 640,000 and always leaving 150,000 for the unwind and the rest of the swap. So a strategy that burns all its gas costs the trader at most that, and a failure or out-of-gas inside the router is caught, not fatal. The outcome therefore depends on the transaction's gas limit: callers set an explicit limit and simulate at the same one (D-20).
 
 Why the band does not move during steps 6-7: the pool curve only runs after `beforeSwap` returns (step 10), so `slot0` is the same when the hook quotes and when it swaps. Inside one hook call, the band's quote and swap results are identical (D-14).
 
@@ -94,7 +98,8 @@ Our target:
 - `registerOrder(PoolKey key, Order order)`: caller must equal `order.maker`; stores one active order per `poolId`; emits `OrderRegistered`.
 - `unregisterOrder(PoolKey key)`: maker only.
 - `hookData`: phase 1 = ABI-encoded `uint256 aquaAmountIn`. Empty = phase 2 search if F12 is built, otherwise pool-only.
-- Events: `AquaFill(poolId, maker, amountIn, amountOut)`, `AquaSkipped(poolId, reason)`.
+- Events: `AquaFill(poolId, maker, amountIn, amountOut)`, `AquaSkipped(poolId, reason)`. `reason` is an ABI-encoded custom error: the hook's own (`ExactOutputNotSupported`, `HintAboveAmount`, `HintTooLarge`, `NoOrder`, `PoolManagerShort(available)`, `InsufficientGas(gasLeft)`) or the router's revert data, at most `MAX_REASON_BYTES` = 256 (empty for an out-of-gas).
+- Public constants: `AQUA_GAS_RESERVE` 150,000, `MIN_AQUA_GAS` 160,000, `MAX_AQUA_GAS` 640,000, `MAX_REASON_BYTES` 256 (D-20).
 - Holds no funds between swaps; no owner powers over user funds.
 
 Note: Priya's order sits on the canonical router, so any taker can also fill it directly through the router, not only through our hook. The band lives in her program, not in the hook, so it protects her on every path.
@@ -104,6 +109,7 @@ Note: Priya's order sits on the canonical router, so any taker can also fill it 
 - Inputs: pool key, trade size, direction.
 - Simulates the full swap with `eth_call` at the current block for candidate hints: 0%, 10%, ..., 100% of the trade, then refines between the best two.
 - Picks the hint with the highest MUMB out; reports pool-only output, split output and the split.
+- Simulates at the explicit gas limit the real transaction will use (for example 1,500,000), never at the node's default or an `eth_estimateGas` result: up to a gas limit of 396,525 the hook skips Aqua and a fill needs about 458,300 (measured with the v4 test router, D-20), so a simulation at another limit can show a different split from the transaction.
 - Used by the demo runner and the web app; never on-chain.
 
 ## 8. Demo comparison
