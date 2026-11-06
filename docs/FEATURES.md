@@ -14,7 +14,7 @@ Build in this order. A feature starts only when the features it depends on are D
 | F06 | Safety: try/catch unwind and skip cases | T1 | F05 | Done | Must |
 | F07 | Off-chain quoter | T2 | F05 | Done | Must (demo) |
 | F08 | Invariant and fuzz tests | T1 | F06 | Done | Should |
-| F09 | Setup and demo runner scripts | T2 | F05, F07 | Todo | Must (demo) |
+| F09 | Setup and demo runner scripts | T2 | F05, F07 | Done | Must (demo) |
 | F10 | Demo web app | Both | F09 | Todo | Should |
 | F11 | Submission pack: README, FEEDBACK.md, video | Both | F09 | Todo | Must (prizes) |
 | F12 | On-chain bounded search (phase 2) | T2 | F06 | Todo | Stretch |

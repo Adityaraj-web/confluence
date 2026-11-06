@@ -39,7 +39,7 @@ Addresses (keep in sync with `.env`):
 5. Initialise the MUMB/USDC pool with the hook at the anchor price; add a small in-range seed position.
 6. Priya approves MUMB and USDC to Aqua once; ships her strategy (fee, curve, Extruction -> band contract with this pool's key and `bandBps`) to Aqua with `app` = the canonical router.
 7. Priya calls `hook.registerOrder(poolKey, order)`.
-8. Snapshot the chain. Every demo run reverts to this snapshot.
+8. Snapshot the chain (`deploy` ends with this). anvil consumes a snapshot id when it is reverted to, so every revert is followed at once, before any swap, by a new snapshot, and the new id is saved in `deployments/local.json` (D-23). Every demo run reverts to the saved snapshot and leaves a new one.
 
 ## 3. One swap, step by step (exact input, trader pays USDC for MUMB)
 
@@ -114,7 +114,7 @@ Note: Priya's order sits on the canonical router, so any taker can also fill it 
 
 ## 8. Demo comparison
 
-Revert to the snapshot, run the swap with hint 0 (pool-only), record output. Revert again, run with the quoter's hint, record output, split, Priya's balances and the pool's liquidity. Both runs start from the same state, so the comparison is fair.
+Revert to the snapshot and snapshot again at once, run the swap with hint 0 (pool-only), record output. Revert to that new snapshot and snapshot again, quote, run with the quoter's hint, record output, split, Priya's balances and the pool price move. Revert and snapshot once more and save the id. Both runs start from the same state, so the comparison is fair, and the runner checks that their states before the swap are equal.
 
 ## 9. Fallback: router-level split (F05-ALT)
 
