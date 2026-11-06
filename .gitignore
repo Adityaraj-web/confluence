@@ -7,3 +7,6 @@ node_modules/
 contracts/broadcast/
 deployments/local.json
 deployments/last-demo.json
+
+# F10 checkpoint screenshots
+web/screenshots/

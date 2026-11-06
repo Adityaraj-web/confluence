@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { avgPrice as scriptsAvgPrice, priceMovePercent as scriptsMove } from "../../scripts/src/demo.ts";
-import { avgPrice, formatGain, priceMovePercent, usdcPerMumb } from "../src/lib/format.ts";
+import { avgPrice, formatGain, group, priceMovePercent, roundTo, usdcPerMumb } from "../src/lib/format.ts";
 import type { RunFile } from "../src/lib/types.ts";
 
 const fx = JSON.parse(readFileSync(new URL("./fixtures/run-1000.json", import.meta.url), "utf8")) as RunFile;
@@ -51,4 +51,25 @@ test("test_F10_usdcPerMumb_poolOnlyAfterCrossCheck", () => {
   // Buying MUMB with USDC (USDC is currency0) lowers sqrtPrice and raises USDC per MUMB.
   assert.ok(s1 < s0 && big(got.replace(".", "")) > 1_000_000n);
   assert.throws(() => usdcPerMumb(0n, true), /zero/);
+});
+
+test("test_F10_roundToNearestForDisplay", () => {
+  // The wireframe's numbers: 984.934, 991.550 (991.5498...), +6.616 (6.6156...), 949.918.
+  assert.equal(roundTo(984934194542570551127n, 18, 3), "984.934");
+  assert.equal(roundTo(991549823315669231761n, 18, 3), "991.550");
+  assert.equal(roundTo(6615628773098680634n, 18, 3), "6.616");
+  assert.equal(roundTo(949918037701570887505n, 18, 3), "949.918");
+  assert.equal(roundTo(1972317821361470963008n, 18, 3), "1,972.318");
+  assert.equal(roundTo(999999600000000000000n, 18, 3), "1,000.000", "carries into the integer part");
+  assert.equal(roundTo(500_000n, 6, 0), "1", "half rounds up");
+  assert.equal(roundTo(0n, 18, 3), "0.000");
+  assert.equal(roundTo(-1500000000000000n, 18, 3), "-0.002");
+  assert.equal(roundTo(1_234_567_000n, 6, 0), "1,235");
+});
+
+test("test_F10_groupKeepsTheFraction", () => {
+  assert.equal(group("550"), "550");
+  assert.equal(group("1000"), "1,000");
+  assert.equal(group("1234567.25"), "1,234,567.25");
+  assert.equal(group("-1234.5"), "-1,234.5");
 });

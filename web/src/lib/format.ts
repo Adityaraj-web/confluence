@@ -72,3 +72,27 @@ export function signedDelta(before: bigint, after: bigint, decimals: number, dp:
   const text = trunc(formatUnits(d < 0n ? -d : d, decimals), dp);
   return `${d < 0n ? "-" : "+"}${text}`;
 }
+
+/** Groups the integer part with commas and keeps the fraction as is: "1234.5" -> "1,234.5". */
+export function group(decimal: string): string {
+  const [i = "0", f] = decimal.split(".");
+  const neg = i.startsWith("-");
+  const digits = neg ? i.slice(1) : i;
+  return `${neg ? "-" : ""}${digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${f === undefined ? "" : `.${f}`}`;
+}
+
+/**
+ * A token amount rounded to the nearest `dp` places (half up), grouped: roundTo(991549823315669231761n, 18, 3) = "991.550".
+ * Pure bigint maths; `decimals` must be at least `dp`. This is for the big display numbers; the CLI's own figures
+ * (avgPrice, priceMovePercent) round down and are left as they are.
+ */
+export function roundTo(v: bigint, decimals: number, dp: number): string {
+  const neg = v < 0n;
+  const a = neg ? -v : v;
+  const unit = 10n ** BigInt(decimals - dp);
+  const q = (a + unit / 2n) / unit;
+  const s = q.toString().padStart(dp + 1, "0");
+  const int = s.slice(0, s.length - dp);
+  const frac = s.slice(s.length - dp);
+  return `${neg ? "-" : ""}${group(int)}${dp > 0 ? `.${frac}` : ""}`;
+}

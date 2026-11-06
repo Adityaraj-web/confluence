@@ -138,11 +138,12 @@ export async function createLiveSource(o: LiveOptions): Promise<LiveResult> {
     };
   };
 
-  const compare: DataSource["compare"] = (req, onPoint) =>
+  const compare: DataSource["compare"] = (req, onPoint, onPhase) =>
     exclusive(async () => {
       if (req.dir !== "usdc-to-mumb") throw new Error("MUMB to USDC is not in this build");
       const { amountIn } = req;
       await resetW();
+      onPhase?.("quoting");
       const points: QuotePoint[] = [];
       const quote = await bestHint(
         { poolKey: d.poolKey, zeroForOne: c.zeroForOne, amountIn, from: d.trader },
@@ -157,9 +158,11 @@ export async function createLiveSource(o: LiveOptions): Promise<LiveResult> {
         },
       );
       const first = await readSnap(c);
+      onPhase?.("pool-only");
       const poolOnly = await runSwap(c, "pool only", amountIn, 0n);
       await resetW();
       if (!snapsEqual(first, await readSnap(c))) throw new Error("the chain changed under us: the two runs would not start from the same state");
+      onPhase?.("confluence");
       const split = await runSwap(c, "confluence", amountIn, quote.hint);
       await resetW();
 

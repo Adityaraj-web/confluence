@@ -108,12 +108,19 @@ export interface RunsIndex {
   guard: { file: string; amount: string };
 }
 
+/** What compare() is doing now; the UI shows it on the button. Added to the spec's interface as an optional argument (D-25). */
+export type Phase = "quoting" | "pool-only" | "confluence";
+
 export interface DataSource {
   kind: "live" | "replay";
   header(): Promise<Header>;
   /** Human decimal amounts ("500", "1000"); replay: recorded only, live: "any" (gap 6). */
   amounts(dir: Direction): string[] | "any";
-  compare(req: { dir: Direction; amountIn: bigint }, onPoint?: (p: QuotePoint) => void): Promise<RunFile>;
+  compare(
+    req: { dir: Direction; amountIn: bigint },
+    onPoint?: (p: QuotePoint) => void,
+    onPhase?: (p: Phase) => void,
+  ): Promise<RunFile>;
   guard(amountIn: bigint): Promise<GuardFile>;
 }
 

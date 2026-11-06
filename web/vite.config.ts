@@ -1,3 +1,4 @@
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -39,7 +40,7 @@ function localDeployment(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), localDeployment()],
+  plugins: [react(), tailwindcss(), localDeployment()],
   // anvil's public test key #2 (the trader). Public by design (D-24, D-25); live.ts uses it only after the anvil check.
   define: { __TRADER_KEY__: JSON.stringify(envKey('TRADER_PRIVATE_KEY')) },
   // The engine imports the generated ABIs from ../scripts/src/abis, outside the web root.
