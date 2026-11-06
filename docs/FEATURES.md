@@ -11,7 +11,7 @@ Build in this order. A feature starts only when the features it depends on are D
 | F04 | Pool, seed position and hook skeleton (pool-only swaps) | T1 | F01 | Done | Must |
 | F05 | Aqua leg inside the hook (phase 1, hint) | T1 + T2 | F03, F04 | Done | **Hour-8 gate** |
 | F05-ALT | Router-level split fallback | T1 + T2 | F03, F04 | Todo | Only if F05 misses hour 8 |
-| F06 | Safety: try/catch unwind and skip cases | T1 | F05 | Todo | Must |
+| F06 | Safety: try/catch unwind and skip cases | T1 | F05 | Done | Must |
 | F07 | Off-chain quoter | T2 | F05 | Todo | Must (demo) |
 | F08 | Invariant and fuzz tests | T1 | F06 | Todo | Should |
 | F09 | Setup and demo runner scripts | T2 | F05, F07 | Todo | Must (demo) |
@@ -33,4 +33,4 @@ Build in this order. A feature starts only when the features it depends on are D
 | 1inch recommendation: use the canonical router + Extruction, not a custom opcode | 0 (Nov 5) | Accepted | D-13 |
 | Mentor question: hook as Aqua taker on the canonical router inside `beforeSwap` | 1 | 1inch: possible (Nov 5) | Proceed with F05; mechanics verified in F02 |
 | `test_F05_fullAquaFill` passes | 8 | Passed (Nov 6, commit 6fc7d94) | Stay on F05; F05-ALT not needed |
-| Any path moves real tokens on the fork | 12 | | |
+| Any path moves real tokens on the fork | 12 | Not triggered; F05 passed Nov 6 | |
