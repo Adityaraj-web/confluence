@@ -124,25 +124,34 @@ contract ConfluenceHook is IHooks {
 
     /// @notice Called by the PoolManager before a swap. Fills the hinted part of an exact-input swap from the
     /// registered Aqua order; returns a zero delta (pool-only) when there is nothing to fill.
-    /// @dev Only the PoolManager may call. No try/catch yet: a failing router call reverts the swap (F06 adds it).
-    /// Skipped, with no `take` and no router call, when: the swap is exact output; `hookData` is not exactly 32
-    /// bytes; the hint is 0; the hint exceeds the swap amount; or no order is registered for the pool.
+    /// @dev Only the PoolManager may call. A swap that did not ask for an Aqua leg (`hookData` not exactly 32 bytes,
+    /// or a hint of 0) is pool-only and silent. A swap that did ask (a non-zero 32-byte hint) and is skipped before
+    /// any `take` or router call emits `AquaSkipped` with one of these reasons, checked in this order: exact output
+    /// (`ExactOutputNotSupported`); the hint exceeds the swap amount (`HintAboveAmount`); the hint does not fit an
+    /// `int128` (`HintTooLarge`); no order for the pool (`NoOrder`); the PoolManager holds less of the input token
+    /// than the hint (`PoolManagerShort`, so `take` cannot revert).
     function beforeSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
         external
         onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        if (params.amountSpecified >= 0 || hookData.length != 32) {
-            return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
-        }
+        if (hookData.length != 32) return _poolOnly();
         uint256 a = abi.decode(hookData, (uint256));
-        // |amountSpecified| without overflowing at int256.min.
-        uint256 amountIn = (-(params.amountSpecified + 1)).toUint256() + 1;
-        if (a == 0 || a > amountIn) return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        if (a == 0) return _poolOnly();
 
         PoolId id = key.toId();
+        if (params.amountSpecified >= 0) return _skipped(id, abi.encodeWithSelector(ExactOutputNotSupported.selector));
+        // |amountSpecified| without overflowing at int256.min.
+        uint256 amountIn = (-(params.amountSpecified + 1)).toUint256() + 1;
+        if (a > amountIn) return _skipped(id, abi.encodeWithSelector(HintAboveAmount.selector));
+        // int128 max, written as a shift so no cast is needed: the largest `a` that fits a `BeforeSwapDelta` half.
+        if (a > type(uint128).max >> 1) return _skipped(id, abi.encodeWithSelector(HintTooLarge.selector));
+
         ISwapVM.Order memory order = _orders[id];
-        if (order.maker == address(0)) return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        if (order.maker == address(0)) return _skipped(id, abi.encodeWithSelector(NoOrder.selector));
+
+        uint256 available = (params.zeroForOne ? key.currency0 : key.currency1).balanceOf(address(poolManager));
+        if (available < a) return _skipped(id, abi.encodeWithSelector(PoolManagerShort.selector, available));
 
         uint256 b = _fill(key, params.zeroForOne, a, order);
         // `b` is only known after the router call, and the PoolManager is locked against re-entry during it.
@@ -151,6 +160,17 @@ contract ConfluenceHook is IHooks {
 
         // Exact input: specified = +a (input consumed), unspecified = -b (output provided) (D-17).
         return (IHooks.beforeSwap.selector, toBeforeSwapDelta(a.toInt128(), -b.toInt128()), 0);
+    }
+
+    /// @dev The return of a swap the pool fills alone: zero delta.
+    function _poolOnly() private pure returns (bytes4, BeforeSwapDelta, uint24) {
+        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+
+    /// @dev Report that the Aqua leg was skipped for `id`, then return the pool-only zero delta.
+    function _skipped(PoolId id, bytes memory reason) private returns (bytes4, BeforeSwapDelta, uint24) {
+        emit AquaSkipped(id, reason);
+        return _poolOnly();
     }
 
     /// @dev Steps 4-8 of ARCHITECTURE section 3: take `a` of the input, pay the router for it, run Priya's order
