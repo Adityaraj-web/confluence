@@ -128,3 +128,18 @@ One entry per decision. Status is Decided, Open or Superseded. Open items must b
 - `registerOrder` replaces any earlier order for the pool, whoever registered it (D-09: one order per pool). Only `order.maker == msg.sender` is checked, so a second maker can displace the first. This can only switch off the Aqua leg for that pool, never fail a swap. Revisit in F06 if it matters.
 - Anchor price, 1 MUMB = 1 USDC (the second F04 [VERIFY]): v4 price is raw currency1 per raw currency0. With USDC as currency0, price = 1e18 / 1e6 = 1e12, so `sqrtPriceX96 = 1e6 * 2^96`. With MUMB as currency0, price = 1e-12, so `sqrtPriceX96 = 2^96 / 1e6`. Both are exact square roots. The currency order depends on `address(mumb)`, which depends on the deployer nonce, so the test base branches on it; at `FORK_BLOCK` USDC (0xA0b8...) is currency0. The anchor ticks are about +/-276,324 (`test_F04_anchorPriceBothOrders`).
 - Seed position: 2,500 USDC and 2,500 MUMB offered, over the anchor tick rounded to spacing 60 plus and minus 600 ticks (about +/-6%), liquidity from `LiquidityAmounts.getLiquidityForAmounts`. A 1,000 USDC pool-only buy moves the tick from 276,324 to 276,080 (about 2.4% in price), which stays in range, and returns 984.934194542570551127 MUMB. F05 to F08 should expect a pool swap of that size to move `slot0` by more than a 200 bps band.
+
+## D-19 F05: the Aqua leg inside the hook
+- Status: Decided (Nov 6)
+- Result: `test_F05_fullAquaFill` passes, so the hook can be the Aqua taker on the canonical router inside `beforeSwap`. Hour-8 gate met; F05-ALT is not needed. D-02's "not covered by F02" item is closed.
+- Checked in the source (v4-core and swap-vm v1.0.2):
+  - `take` and `settle` need only an unlocked PoolManager (`PoolManager.sol:289-304`) and book deltas to the caller, the hook. The returned `BeforeSwapDelta` is booked to the hook (`PoolManager.sol:222`) and subtracted from the trader's delta (`Hooks.sol:311`), so the hook's `-a` (take) and `+b` (settle) net against `+a` and `-b`.
+  - `take` is a real transfer out of the PoolManager's global balance, so it needs `a` on hand. USDC is always there. MUMB is ours, so the PoolManager holds only the seed's MUMB (2,500e18): a MUMB-input hint above that reverts the swap in F05. The band caps one fill at about 2,006 MUMB, so demo sizes fit. F06 must guard it.
+  - The router's taker is `msg.sender`, the hook (`SwapVM.sol:179`); the output goes to the hook because `to` is zero (`SwapVM.sol:266`). The per-order lock (`SwapVM.sol:164`) trips only if the same order re-enters; F06's try/catch turns that into a pool-only fill.
+- Choices the spec left open:
+  - `CurrencySettler` comes from `v4-core/test/utils/` (the helper `CustomCurveHook` uses). Nothing else in the repo settles.
+  - Skip checks run cheapest first: exact output or `hookData` not 32 bytes, then `a == 0` or `a > |amountSpecified|` (computed without overflow at `int256.min`), then no registered order.
+  - The minimum output passed to the router is 1; the trader's price limit and the band are the real protection.
+  - OpenZeppelin `SafeCast.toUint256` (aliased `OZSafeCast`) for the `int256` to `uint256` step; v4's `SafeCast` has none. Two forge-lint disables, each with its reason: `unused-return` (only `b` is used; the router's check makes the amount in equal `a`) and `reentrancy-events` (`b` is known only after the call).
+  - `AquaSkipped` is not in F05: skips are silent, and F06 designs the event with the router's revert data.
+- Partial fills confirm D-17's sign: `(+a, -b)` with a hint below the swap amount, and in both directions.
