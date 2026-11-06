@@ -68,7 +68,9 @@ export interface Snap {
   aquaUsdc: bigint;
   /** Only this pool holds MUMB, so this is the pool's locked MUMB. */
   poolManagerMumb: bigint;
-  /** The pool's in-range liquidity L. */
+  /** slot0 sqrtPriceX96 of the pool. */
+  sqrtPrice: bigint;
+  /** The pool's in-range liquidity L. A swap inside the range never changes it, so it is kept in last-demo.json only. */
   liquidity: bigint;
 }
 
@@ -93,6 +95,13 @@ const M = (v: bigint) => formatUnits(v, MUMB_DECIMALS);
 function percent(diff: bigint, base: bigint): string {
   const hundredths = (diff * 10_000n) / base;
   return `${hundredths / 100n}.${(hundredths % 100n).toString().padStart(2, "0")}%`;
+}
+
+/** The pool's slot0 price (sqrtPrice squared) moved by this much, as a percentage of the price before: "2.37%". */
+export function priceMovePercent(sqrtBefore: bigint, sqrtAfter: bigint): string {
+  const before = sqrtBefore * sqrtBefore;
+  const after = sqrtAfter * sqrtAfter;
+  return percent(after > before ? after - before : before - after, before);
 }
 
 /** Price of one output token in input tokens, six decimals, rounded down. */
@@ -185,8 +194,11 @@ export function formatTable(p: RunRecord, s: RunRecord): string {
     ["Priya Aqua MUMB, after", M(p.after.aquaMumb), M(s.after.aquaMumb)],
     ["Priya Aqua USDC, before", U(p.before.aquaUsdc), U(s.before.aquaUsdc)],
     ["Priya Aqua USDC, after", U(p.after.aquaUsdc), U(s.after.aquaUsdc)],
-    ["pool liquidity, before", p.before.liquidity.toString(), s.before.liquidity.toString()],
-    ["pool liquidity, after", p.after.liquidity.toString(), s.after.liquidity.toString()],
+    [
+      "pool price move (slot0)",
+      priceMovePercent(p.before.sqrtPrice, p.after.sqrtPrice),
+      priceMovePercent(s.before.sqrtPrice, s.after.sqrtPrice),
+    ],
     ["PoolManager MUMB, before", M(p.before.poolManagerMumb), M(s.before.poolManagerMumb)],
     ["PoolManager MUMB, after", M(p.after.poolManagerMumb), M(s.after.poolManagerMumb)],
     ["hook event", eventCell(p), eventCell(s)],
@@ -335,7 +347,7 @@ async function readSnap(c: Ctx): Promise<Snap> {
         args: [d.maker, d.swapVmRouter, d.expectedStrategyHash, token],
       })
     )[0];
-  const [traderMumb, traderUsdc, priyaMumb, priyaUsdc, aquaMumb, aquaUsdc, poolManagerMumb, liquidity] =
+  const [traderMumb, traderUsdc, priyaMumb, priyaUsdc, aquaMumb, aquaUsdc, poolManagerMumb, sqrtPrice, liquidity] =
     await Promise.all([
       bal(d.mumb, d.trader),
       bal(d.usdc, d.trader),
@@ -344,6 +356,7 @@ async function readSnap(c: Ctx): Promise<Snap> {
       virtual(d.mumb),
       virtual(d.usdc),
       bal(d.mumb, d.poolManager),
+      poolSqrtPrice(c),
       poolLiquidity(c),
     ]);
   return {
@@ -354,6 +367,7 @@ async function readSnap(c: Ctx): Promise<Snap> {
     aquaMumb: BigInt(aquaMumb),
     aquaUsdc: BigInt(aquaUsdc),
     poolManagerMumb,
+    sqrtPrice,
     liquidity,
   };
 }
@@ -512,9 +526,8 @@ async function cmdGuard(amount: string): Promise<void> {
     const p0 = await poolSqrtPrice(c);
     const mover = await runSwap(c, "price move", moveIn, 0n);
     const p1 = await poolSqrtPrice(c);
-    const [price0, price1] = [p0 * p0, p1 * p1];
     console.log(`moved the pool with a ${GUARD_MOVE_AMOUNT} USDC pool-only trade (${M(mover.mumbOut)} MUMB out): ` +
-      `pool price moved ${percent(price1 > price0 ? price1 - price0 : price0 - price1, price0)}`);
+      `pool price moved ${priceMovePercent(p0, p1)}`);
 
     // The same hint as before the move: Aqua's price is now outside the band of the pool's live price.
     const hinted = await runSwap(c, "hinted swap", amountIn, quote.hint);

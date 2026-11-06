@@ -142,6 +142,7 @@ const snap = (o: Partial<Snap> = {}): Snap => ({
   aquaMumb: 100_000n * e18,
   aquaUsdc: 100_000n * 10n ** 6n,
   poolManagerMumb: 2_500n * e18,
+  sqrtPrice: 1000n,
   liquidity: 123_456n,
   ...o,
 });
@@ -152,7 +153,12 @@ test("test_F09_formatTable", () => {
     label: "pool only",
     hint: 0n,
     before: snap(),
-    after: snap({ traderMumb: 984_934_194_542_570_551_127n, traderUsdc: 99_000n * usdc, poolManagerMumb: 1_515n * e18 }),
+    after: snap({
+      traderMumb: 984_934_194_542_570_551_127n,
+      traderUsdc: 99_000n * usdc,
+      poolManagerMumb: 1_515n * e18,
+      sqrtPrice: 1010n,
+    }),
     usdcIn: 1000n * usdc,
     mumbOut: 984_934_194_542_570_551_127n,
     gasUsed: 150_000n,
@@ -169,6 +175,7 @@ test("test_F09_formatTable", () => {
       aquaMumb: 100_000n * e18 - 545_359_521_066_233_309_646n,
       aquaUsdc: 100_000n * usdc + 550n * usdc,
       poolManagerMumb: 2_500n * e18 - 446_190_302_249_435_922_115n,
+      sqrtPrice: 1005n,
     }),
     usdcIn: 1000n * usdc,
     mumbOut: 991_549_823_315_669_231_761n,
@@ -182,6 +189,9 @@ test("test_F09_formatTable", () => {
   assert.match(t, /pool leg: MUMB out\s+984\.934194542570551127\s+446\.190302249435922115/);
   assert.match(t, /Priya wallet MUMB, after\s+1000000\s+999454\.640478933766690354/);
   assert.match(t, /Priya Aqua USDC, after\s+100000\s+100550/);
+  // The price is sqrtPrice squared: 1000^2 -> 1010^2 is a 2.01% move, 1000^2 -> 1005^2 is 1.00%.
+  assert.match(t, /pool price move \(slot0\)\s+2\.01%\s+1\.00%/);
+  assert.doesNotMatch(t, /liquidity/, "liquidity stays in last-demo.json only");
   assert.match(t, /gain vs pool only: \+6\.615628773098680634 MUMB \(\+67\.\d\d bps\)/);
   // The table is a pure function of its inputs: same records, same text.
   assert.equal(formatTable(poolOnly, split), t);
