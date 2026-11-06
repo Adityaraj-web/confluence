@@ -11,6 +11,8 @@ const out = resolve(here, "../../../contracts/out");
 const TARGETS: [string, string][] = [
   ["PoolSwapTest", "poolSwapTestAbi"],
   ["ConfluenceHook", "confluenceHookAbi"],
+  ["MockMUMB", "mockMumbAbi"],
+  ["IPoolManager", "poolManagerAbi"],
 ];
 
 for (const [name, exportName] of TARGETS) {
