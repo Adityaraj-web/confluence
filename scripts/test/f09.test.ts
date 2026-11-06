@@ -5,12 +5,12 @@ import { hexToBytes, keccak256, type Address, type Hex } from "viem";
 import { FEE_0_30_PCT, buildBandArgs, buildBandProgram, buildOrderEncoded } from "../src/strategy.js";
 import type { PoolKeyJson } from "../src/config.js";
 
-const POOL_MANAGER: Address = "0x000000000004444c5dc75cB358380D2e3dE08A90";
-const BAND: Address = "0x1234567890123456789012345678901234567890";
-const MAKER: Address = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+const POOL_MANAGER: Address = "0x00000000000000000000000000000000000000b1";
+const BAND: Address = "0x00000000000000000000000000000000000000b2";
+const MAKER: Address = "0x00000000000000000000000000000000000000f1";
 const KEY: PoolKeyJson = {
-  currency0: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-  currency1: "0xb1b86991c6218b36c1d19d4a2e9eb0ce3606eb49",
+  currency0: "0x00000000000000000000000000000000000000c1",
+  currency1: "0x00000000000000000000000000000000000000c2",
   fee: 3000,
   tickSpacing: 60,
   hooks: "0x00000000000000000000000000000000000000c0",
