@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "node --import tsx --test test/format.test.ts test/decode.test.ts test/quoter.test.ts test/engine.test.ts",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
-    "test:int": "node --env-file=../.env.example --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 test/live.test.ts"
+    "test:int": "node --env-file=../.env.example --env-file-if-exists=../.env --import tsx --test --test-concurrency=1 test/live.test.ts",
+    "record": "node --env-file=../.env.example --env-file-if-exists=../.env --import tsx scripts/record.ts"
   },
   "dependencies": {
     "react": "^19.3.1",
