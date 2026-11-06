@@ -52,6 +52,7 @@ contract Setup is Script, StrategyLib {
     uint256 internal constant USDC_BALANCE_SLOT = 9;
 
     error UsdcFundingFailed(address who, uint256 want, uint256 got);
+    error HookAddressMismatch(address expected, address actual);
 
     struct Actors {
         address deployer;
@@ -143,7 +144,7 @@ contract Setup is Script, StrategyLib {
         (address expected, bytes32 salt) =
             HookMiner.find(CREATE2_FACTORY, flags, type(ConfluenceHook).creationCode, args);
         hook = new ConfluenceHook{salt: salt}(IPoolManager(POOL_MANAGER), ROUTER);
-        require(address(hook) == expected, "Setup: hook address mismatch");
+        if (address(hook) != expected) revert HookAddressMismatch(expected, address(hook));
     }
 
     /// @dev Same pool as PoolBase._createPool: fee 3000, spacing 60, anchor 1 MUMB = 1 USDC, ~6% range seed.
