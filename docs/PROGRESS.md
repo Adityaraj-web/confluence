@@ -95,7 +95,26 @@ Entry format:
 
 ## 2026-11-06 · F07 · T2 · Done
 - Changed: scripts/src/quoter.ts, scripts/src/config.ts, scripts/src/abis/ (generator and generated PoolSwapTest, ConfluenceHook), scripts/test/quoter.test.ts, scripts/test/quoter.live.test.ts, scripts/package.json (`quote`, `test`, `test:int`, `abis`); pulled forward from F09: contracts/script/Setup.s.sol, contracts/foundry.toml (`fs_permissions`), deployments/.gitkeep; docs (DECISIONS D-21, FEATURES, PROGRESS).
-- Verified: `forge build` clean (only the swap-vm `ProgramBuilder` and F04 `missing-zero-check` warnings); `forge test` 64 passed before F07. `pnpm --dir scripts test` 17 passed; `pnpm --dir scripts test:int` 5 passed against anvil at `FORK_BLOCK` after `forge script script/Setup.s.sol --broadcast`; `tsc --noEmit` clean. `pnpm --dir scripts quote --amount 1000 --dir usdc-to-mumb`: pool-only 984.934194542570551127 MUMB, best split 991.549823315669231761 (hint 550000000, 55% to Aqua); 60% and 100% rows equal F05's measured values. `mumb-to-usdc` gives the same numbers in USDC. Tests were committed red first. `spec-reviewer`: every Behaviour and Acceptance line met, no rule breach; it did not run the live tests (shown above); weak tests it named are tightened (strict `>` in the reverse direction, a gas-limit live test), the unit hint-0 test stays weak by design (D-21).
+- Verified: `forge build --force` clean (only the swap-vm `ProgramBuilder` and F04 `missing-zero-check` warnings); `forge test` 64 passed, 0 failed, run again after the F07 changes. `pnpm --dir scripts test` 17 passed; `pnpm --dir scripts test:int` 6 passed against anvil at `FORK_BLOCK` after `forge script script/Setup.s.sol --broadcast`; `tsc --noEmit` clean. `pnpm --dir scripts quote --amount 1000 --dir usdc-to-mumb`: pool-only 984.934194542570551127 MUMB, best split 991.549823315669231761 (hint 550000000, 55% to Aqua); 60% and 100% rows equal F05's measured values. `mumb-to-usdc` gives the same numbers in USDC. Tests were committed red first. `spec-reviewer`: every Behaviour and Acceptance line met, no rule breach; it did not run the live tests (shown above); weak tests it named are tightened (strict `>` in the reverse direction, a gas-limit live test), the unit hint-0 test stays weak by design (D-21).
 - Decisions: D-21 (quoter choices, the setup pulled forward from F09, funding by `anvil_setStorageAt`, the swap router, the `.env` note).
 - Next: F09 (T2) extends `Setup.s.sol` (step 8 snapshot), adds `shipStrategy.ts`, `demo.ts` and the Makefile; F08 (T1). Hour gates: not affected.
-- Open issues: (1) This machine's `.env` lacks `DEPLOYER_PRIVATE_KEY`, `PRIYA_PRIVATE_KEY`, `TRADER_PRIVATE_KEY` (they are in `.env.example`); add them. (2) The simulated output was never compared with a real transaction's receipt: F09's demo runner must, and must read `AquaFill` / `AquaSkipped` (the quoter cannot see logs). (3) D-20's gas reserve was measured with `PoolSwapTest`; another router in F10 means re-measuring. (4) `contracts/broadcast/` and `deployments/local.json` are untracked run output; decide in F09 whether to ignore them. (5) A second fill in the same direction is subject to the band (F03).
+- Open issues: (1) This machine's `.env` lacks `DEPLOYER_PRIVATE_KEY`, `PRIYA_PRIVATE_KEY`, `TRADER_PRIVATE_KEY` (they are in `.env.example`); add them. (2) `realSwapMatchesQuote` compares one real swap with its quote; F09's demo runner must still read `AquaFill` / `AquaSkipped` from every receipt (the quoter cannot see logs). (3) D-20's gas reserve was measured with `PoolSwapTest`; another router in F10 means re-measuring. (4) `contracts/broadcast/` and `deployments/local.json` are now in `.gitignore` (`deployments/.gitkeep` stays). (5) A second fill in the same direction is subject to the band (F03).
+- **Run F07 live from a clean clone** (repo root; `.env` needs `MAINNET_RPC_URL` for an archive node and `FORK_BLOCK`, as in `.env.example`; the three anvil keys are loaded from `.env.example`):
+  ```
+  git submodule update --init --recursive
+  pnpm --dir scripts install --frozen-lockfile
+  (cd contracts && forge build)
+
+  # terminal 1: the fork (anvil does not read .env itself)
+  set -a; source .env; set +a; anvil --fork-url $MAINNET_RPC_URL --fork-block-number $FORK_BLOCK
+
+  # terminal 2: setup once per fresh anvil (writes deployments/local.json)
+  set -a; source .env.example; source .env; set +a
+  (cd contracts && forge script script/Setup.s.sol --rpc-url http://127.0.0.1:8545 --broadcast)
+
+  pnpm --dir scripts quote --amount 1000 --dir usdc-to-mumb   # table; best split > pool only
+  pnpm --dir scripts test                                      # 17 unit tests, no chain
+  pnpm --dir scripts test:int                                  # 6 live tests (loads ../.env.example, then ../.env)
+  pnpm --dir scripts tsc --noEmit
+  ```
+  `test:int` fails, not skips, without the anvil and the setup. `realSwapMatchesQuote` sends a real swap inside an `evm_snapshot` and reverts it, so the state is unchanged afterwards. `pnpm --dir scripts abis` regenerates the ABIs after a contract change.
