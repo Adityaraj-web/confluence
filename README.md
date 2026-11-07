@@ -36,24 +36,45 @@ One exact-input swap:
 5. The hook settles the MUMB into the PoolManager and returns a `BeforeSwapDelta` for what it served.
 6. The pool curve fills the rest; the PoolManager checks every balance nets to zero or reverts everything.
 
-```
- trader ──swap(hookData = hint)──▶ PoolManager ──beforeSwap──▶ ConfluenceHook
-                                        ▲                          │ 3. take(input, a)
-                                        │                          │ 4. router.swap(order, a)   [try/catch]
-                                        │                          ▼
-                                        │            AquaSwapVMRouter (official, unmodified)
-                                        │              runs Priya's program:
-                                        │              fee ▶ XYC curve ▶ Extruction ──▶ PoolPriceBandExtruction
-                                        │                                               reverts if fill is
-                                        │                                               outside ±bandBps of
-                                        │                                               the pool's live price
-                                        │              Aqua pulls b MUMB from Priya's wallet ──▶ hook
-                                        │                          │
-                                        │ 5. settle(MUMB, b)       │
-                                        └───── BeforeSwapDelta(+a, −b) ◀── hook
-                                        │
-                              6. pool curve fills the other (amount − a) against the seed position;
-                                 PoolManager reverts unless every balance nets to zero
+```mermaid
+flowchart TD
+    T["<b>1 · Trader</b><br/>swap(…, hookData = hint)"]
+    PM["<b>2 · PoolManager</b><br/>calls beforeSwap on the hook"]
+    H1["<b>3 · ConfluenceHook</b><br/>take(input, a), router call in try/catch"]
+
+    subgraph R["4 · AquaSwapVMRouter (official, unmodified) runs Priya's program"]
+        FEE["Flat fee"] --> XYC["XYC curve"] --> EXT["Extruction"]
+        EXT --> PULL["<b>Aqua pulls b MUMB</b><br/>from Priya's wallet to the hook"]
+    end
+
+    PPBE["<b>PoolPriceBandExtruction</b><br/>reverts if the fill is outside ±bandBps<br/>of the pool's live price"]
+    SKIP["<b>If the router call reverts</b><br/>hook emits AquaSkipped, returns zero delta"]
+    H2["<b>5 · ConfluenceHook settles</b><br/>settle(MUMB, b), returns BeforeSwapDelta(+a, −b)"]
+    POOL["<b>6 · Pool curve fills the rest</b><br/>amount − a against the seed position<br/>PoolManager reverts unless every balance nets to zero"]
+
+    T --> PM --> H1 --> FEE
+    EXT --> PPBE
+    PULL --> H2 --> POOL
+    R -.-> SKIP -.-> POOL
+
+    subgraph LG["Legend"]
+        direction LR
+        L1["Our code"]
+        L2["Existing contracts, unmodified"]
+        L3["Fallback path"]
+    end
+    POOL ~~~ LG
+
+    classDef ours fill:#E1F5EE,stroke:#0F6E56,color:#085041
+    classDef existing fill:#EEEDFE,stroke:#534AB7,color:#3C3489
+    classDef plain fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A
+    classDef fallback fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A,stroke-dasharray:4 4
+    class H1,H2,PPBE,L1 ours
+    class PM,POOL,L2 existing
+    class T,FEE,XYC,EXT,PULL plain
+    class SKIP,L3 fallback
+    style R fill:#EEEDFE,stroke:#534AB7,color:#3C3489
+    style LG fill:none,stroke:none
 ```
 
 If step 4 fails for any reason (band breached, strategy docked, Priya's wallet short, approval revoked, out of gas), everything the router did is undone with it. The hook returns the input it took, emits `AquaSkipped(poolId, reason)` with the router's revert data and returns a zero delta, so the pool fills the whole swap. **Aqua can never make a v4 swap fail** ([D-20](docs/DECISIONS.md)). Full detail, including the token-flow invariants, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
