@@ -15,8 +15,8 @@ Build in this order. A feature starts only when the features it depends on are D
 | F07 | Off-chain quoter | T2 | F05 | Done | Must (demo) |
 | F08 | Invariant and fuzz tests | T1 | F06 | Done | Should |
 | F09 | Setup and demo runner scripts | T2 | F05, F07 | Done | Must (demo) |
-| F10 | Demo web app | Both | F09 | In progress (Tier 1 built; Vercel deploy waits for approval, F11) | Should |
-| F11 | Submission pack: README, FEEDBACK.md, video | Both | F09 | Todo | Must (prizes) |
+| F10 | Demo web app | Both | F09 | Tier 1 done and deployed (https://confluence-delta-seven.vercel.app/, replay); Tier 2 not built | Should |
+| F11 | Submission pack: README, FEEDBACK.md, video | Both | F09 | In progress (README and FEEDBACK.md written, links verified; video, Uniswap form and partner prizes pending) | Must (prizes) |
 | F12 | On-chain bounded search (phase 2) | T2 | F06 | Todo | Stretch |
 
 ## Parallel tracks

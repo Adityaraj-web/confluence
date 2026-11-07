@@ -180,3 +180,11 @@ Entry format:
 - Screenshots: `docs/demo-screenshot.png` (Swap after Run both at 1,000 USDC); the rest are in `web/screenshots/` (gitignored).
 - Next: Vercel deploy and the README URL (F11; waiting for approval). Tier 2: MUMB to USDC, "How it works".
 - Open issues: (1) the Guard marker is on the right (+3.14%, MUMB per USDC), not at -3.14% as first asked; see the Guard sign in D-25. (2) Replay's 2,000 USDC and guard files exist only for the recorded amounts. (3) Live mode's integration tests need a fresh fork at the deploy state.
+
+## 2026-11-07 · F11 · Both · In progress (README, FEEDBACK.md, links verified; video, form and clean-clone run pending)
+- Changed: README.md, FEEDBACK.md, docs/demo-video-link.md (placeholder), docs/PRIZES.md (boxes + status section), docs/FEATURES.md, docs/DECISIONS.md (D-26), this entry. No code changed. Branch `f11-submission`.
+- Verified: all 12 pinned code links in README.md return 200 and the anchored first and last lines are the code the README names (raw file fetched at the pinned SHA); every relative link exists; the external links and the deployed site return 200 and `runs/index.json` is served (fork block 26349400). `forge test --no-match-path "test/invariant/*"` -> 68 passed (README said 64 before the check; fixed). Not rerun: the invariant campaign, scripts and web tests (no code changed). The README run block was not executed from a clean clone by me; Ayush is doing that.
+- First commit date vs kickoff (shown to the team, who make the claim): commits by day (UTC): Nov 5: 14, Nov 6: 83. First commit `f9f0001` Nov 5 15:40:26, "Docs: project context" (docs, `.claude` rules and settings, no code); second `3d59722` Nov 5 20:36:50 (docs); first code commit `bd55c38` Nov 5 20:46:56 (F00). PROGRESS also records docs drafted on Oct 30 (pre-kickoff, "no code exists yet").
+- Decisions: D-26.
+- Next: record the video and fill docs/demo-video-link.md; submit the Uniswap feedback form with the FEEDBACK.md link; pick partner prizes on the submission form; Ayush's clean-clone run (fix problems on main); the team confirms the README "How we used AI" paragraph (D-26).
+- Open issues: PRIZES boxes left unticked: feedback form, onchain transfers shown live, written after kickoff, video, partner prizes. README limitation on `slot0` manipulation (F03 issue 2) has no mitigation.
