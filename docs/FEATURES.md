@@ -34,3 +34,23 @@ Build in this order. A feature starts only when the features it depends on are D
 | Mentor question: hook as Aqua taker on the canonical router inside `beforeSwap` | 1 | 1inch: possible (Nov 5) | Proceed with F05; mechanics verified in F02 |
 | `test_F05_fullAquaFill` passes | 8 | Passed (Nov 6, commit 6fc7d94) | Stay on F05; F05-ALT not needed |
 | Any path moves real tokens on the fork | 12 | Not triggered; F05 passed Nov 6 | |
+
+# v2 Phase 1 (protocol)
+
+Solo build by Adityaraj from Nov 11, 2026. Design: `docs/ARCHITECTURE-v2.md`. Build in milestone order; within a milestone, follow Depends on. V2-03 needs only V2-00 and may run in parallel with V2-01/02.
+
+| ID | Spec | Milestone | Depends on | Status | Gate |
+| --- | --- | --- | --- | --- | --- |
+| V2-00 | Reference model and repo prep | M1 Maths core | — | Todo | **G0: ungated taker on Unichain (first test)** |
+| V2-01 | SplitMath | M1 | V2-00 | Todo | |
+| V2-02 | PoolVenue | M1 | V2-01 | Todo | M1: split = brute force and fork oracle |
+| V2-03 | Anchor | M2 Guard | V2-00 | Todo | |
+| V2-04 | BandGuardV2 | M2 | V2-03 | Todo | M2: same-block attack refused |
+| V2-05 | StrategyTemplate and registry | M3 Maker market | V2-04 | Todo | |
+| V2-06 | MakerVenue | M3 | V2-03, V2-05 | Todo | |
+| V2-07 | Hint-free split in beforeSwap | M3 | V2-01, V2-02, V2-03, V2-06 | Todo | **M3: empty hookData beats v1's hinted best** |
+| V2-08 | Exact output | M4 Completeness | V2-07 | Todo | |
+| V2-09 | Quoting parity and Lens | M4 | V2-07, V2-08 | Todo | M4: quoter = swap, both modes |
+| V2-10 | Attack suite | M5 Proof | V2-04 to V2-08 | Todo | |
+| V2-11 | Gas budget | M5 | V2-07 to V2-09 | Todo | |
+| V2-12 | Invariants v2 and Phase 1 exit | M5 | all | Todo | Phase 1 exit |

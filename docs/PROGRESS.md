@@ -188,3 +188,9 @@ Entry format:
 - Decisions: D-26.
 - Next: record the video and fill docs/demo-video-link.md; submit the Uniswap feedback form with the FEEDBACK.md link; pick partner prizes on the submission form; Ayush's clean-clone run (fix problems on main); the team confirms the README "How we used AI" paragraph (D-26).
 - Open issues: PRIZES boxes left unticked: feedback form, onchain transfers shown live, written after kickoff, video, partner prizes. README limitation on `slot0` manipulation (F03 issue 2) has no mitigation.
+
+## 2026-11-11 · V2 docs · Adityaraj · Done
+- Changed: CLAUDE.md (v2), docs/ARCHITECTURE-v2.md (new), docs/specs/V2-00 to V2-12 (new), docs/FEATURES.md (v2 table), docs/DECISIONS.md (D-27), docs/WORKFLOW.md (v2 loop), .claude/rules/solidity.md, .claude/agents/spec-reviewer.md. No code changed.
+- Verified: v1 suite untouched; spec numbers checked against D-21 and the Python check in D-27.
+- Decisions: D-27.
+- Next: tag `v1-hackathon` on bf4b236 and push it; add UNICHAIN_RPC_URL to .env; start V2-00 in plan mode with gate G0 as the first test.

@@ -54,3 +54,46 @@ This file is for us, the humans. It holds the kickoff steps and the prompts we p
 - `/compact <what to keep>` shrinks a long session without starting over.
 - `/rename <name>` names a session; `claude --resume` picks one back up.
 - `/btw <question>` asks a side question without adding it to the session.
+
+## v2 loop (solo, from Nov 11, 2026)
+
+Once, before V2-00:
+
+```
+git tag v1-hackathon bf4b236 && git push origin v1-hackathon
+```
+
+Add `UNICHAIN_RPC_URL` (free Alchemy/Infura Unichain endpoint) and `UNICHAIN_FORK_BLOCK` to `.env`.
+
+Per spec:
+
+1. `git checkout main && git pull && git checkout -b v2/<nn>-<name>`, then `/clear` in Claude Code.
+2. Plan mode, paste:
+
+   ```
+   We are starting V2-xx. Read docs/specs/V2-xx-*.md, the docs/ARCHITECTURE-v2.md sections it
+   names, the Acceptance sections of its Depends-on specs, and the last five entries of
+   docs/PROGRESS.md. Run forge build and the full test suite and report anything red. Check the
+   [VERIFY] items against the source in contracts/lib/ and tell me what you found. Then propose a
+   step-by-step plan: files you will create or change, and the acceptance tests you will write
+   first and show failing.
+   ```
+
+3. Approve or correct the plan. Let it build: tests red first, then green.
+4. Review:
+
+   ```
+   Use the spec-reviewer subagent to review the changes for V2-xx against docs/specs/V2-xx-*.md.
+   Report only gaps that affect correctness, the acceptance criteria or a hard rule.
+   ```
+
+5. Fix real gaps only, then:
+
+   ```
+   Run the acceptance command for V2-xx and the full suite and show the output. Update
+   docs/FEATURES.md and append a PROGRESS.md entry. Commit with a "V2-xx:" message.
+   ```
+
+6. `git checkout main && git merge --no-ff v2/<nn>-<name> && git push`.
+
+Gate G0 is the first test of V2-00. If it fails, stop and bring the output to the planning chat before writing anything else.
