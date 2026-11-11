@@ -33,6 +33,9 @@ contract PassThroughExtruction {
 contract V200UnichainTakerTest is Test, StrategyLib {
     address internal constant AQUA = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
     address internal constant ROUTER = 0x111111338c5091E8440b67B168bAe16a668AC0De;
+    address internal constant MAINNET_WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    /// @dev OP Stack predeploy, the same address on every OP Stack chain.
+    address internal constant UNICHAIN_WETH = 0x4200000000000000000000000000000000000006;
 
     uint256 internal constant SHIPPED_IN = 100_000e18;
     uint256 internal constant SHIPPED_OUT = 100_000e18;
@@ -131,9 +134,62 @@ contract V200UnichainTakerTest is Test, StrategyLib {
         assertEq(tokenIn.balanceOf(AQUA) + tokenOut.balanceOf(AQUA), 0, "aqua holds tokens");
         assertEq(tokenIn.allowance(address(helper), ROUTER), 0, "helper allowance to router");
 
-        // [VERIFY] the router on Unichain is mainnet's router v1.0.2.
-        bytes memory mainnetCode = _mainnetRouterCode();
-        assertEq(keccak256(ROUTER.code), keccak256(mainnetCode), "Unichain router code != mainnet router code");
+        _assertSameRouterModuloImmutables();
+    }
+
+    /// @dev [VERIFY] the router on Unichain is mainnet's router v1.0.2. The two codehashes differ only in three
+    ///      32-byte immutables: WETH, the EIP-712 chain id and the EIP-712 domain separator. Swap those in mainnet's
+    ///      code for Unichain's values; every other byte must already match, or the hashes differ and this fails.
+    function _assertSameRouterModuloImmutables() internal {
+        bytes memory code = _mainnetRouterCode();
+
+        (, string memory name, string memory version, uint256 chainId, address verifying,,) =
+            SwapVM(payable(ROUTER)).eip712Domain();
+        assertEq(name, "1inch SwapVM v1.0", "EIP-712 name");
+        assertEq(version, "1.0.2", "router version");
+        assertEq(chainId, 130, "EIP-712 chain id");
+        assertEq(verifying, ROUTER, "EIP-712 verifying contract");
+
+        _swapWord(code, bytes32(uint256(uint160(MAINNET_WETH))), bytes32(uint256(uint160(UNICHAIN_WETH))));
+        _swapWord(code, bytes32(uint256(1)), bytes32(uint256(130)));
+        _swapWord(code, _domainSeparator(name, version, 1), _domainSeparator(name, version, 130));
+
+        assertEq(keccak256(ROUTER.code), keccak256(code), "Unichain router code != mainnet code modulo immutables");
+    }
+
+    function _domainSeparator(string memory name, string memory version, uint256 chainId)
+        internal
+        pure
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes(name)),
+                keccak256(bytes(version)),
+                chainId,
+                ROUTER
+            )
+        );
+    }
+
+    /// @dev Replaces the one 32-byte word equal to `from` with `to`, in place. Fails unless there is exactly one.
+    function _swapWord(bytes memory code, bytes32 from, bytes32 to) internal pure {
+        uint256 hits;
+        for (uint256 i; i + 32 <= code.length; i++) {
+            bytes32 word;
+            assembly ("memory-safe") {
+                word := mload(add(add(code, 32), i))
+            }
+            if (word == from) {
+                assembly ("memory-safe") {
+                    mstore(add(add(code, 32), i), to)
+                }
+                hits++;
+                i += 31;
+            }
+        }
+        require(hits == 1, "immutable word not found exactly once in mainnet router code");
     }
 
     function _mainnetRouterCode() internal returns (bytes memory code) {
