@@ -20,8 +20,8 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {BPS} from "@1inch/swap-vm/src/instructions/Fee.sol";
 
-import {ConfluenceHook} from "../../../src/ConfluenceHook.sol";
-import {PoolPriceBandExtruction} from "../../../src/PoolPriceBandExtruction.sol";
+import {ConfluenceHookV1 as ConfluenceHook} from "../../../src/v1/ConfluenceHookV1.sol";
+import {PoolPriceBandExtruction} from "../../../src/v1/PoolPriceBandExtruction.sol";
 import {MockMUMB} from "../../../src/mocks/MockMUMB.sol";
 import {StrategyLib} from "../../base/StrategyLib.sol";
 

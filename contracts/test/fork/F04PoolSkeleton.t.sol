@@ -12,7 +12,7 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
-import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
+import {ConfluenceHookV1 as ConfluenceHook} from "../../src/v1/ConfluenceHookV1.sol";
 import {PoolBase} from "../base/PoolBase.t.sol";
 
 contract F04PoolSkeletonTest is PoolBase {

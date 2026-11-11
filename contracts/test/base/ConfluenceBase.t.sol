@@ -12,8 +12,8 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 
-import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
-import {PoolPriceBandExtruction} from "../../src/PoolPriceBandExtruction.sol";
+import {ConfluenceHookV1 as ConfluenceHook} from "../../src/v1/ConfluenceHookV1.sol";
+import {PoolPriceBandExtruction} from "../../src/v1/PoolPriceBandExtruction.sol";
 import {PoolBase} from "./PoolBase.t.sol";
 import {StrategyLib} from "./StrategyLib.sol";
 

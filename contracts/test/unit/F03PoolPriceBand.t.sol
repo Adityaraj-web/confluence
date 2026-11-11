@@ -12,7 +12,7 @@ import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {SwapQuery, SwapRegisters} from "@1inch/swap-vm/src/libs/VM.sol";
 
-import {PoolPriceBandExtruction} from "../../src/PoolPriceBandExtruction.sol";
+import {PoolPriceBandExtruction} from "../../src/v1/PoolPriceBandExtruction.sol";
 
 /// @notice Answers `extsload` with a price for one pool's storage slot and zero for any other, like an uninitialised
 ///         pool on the real PoolManager. A band that derives the wrong pool id therefore reads zero.

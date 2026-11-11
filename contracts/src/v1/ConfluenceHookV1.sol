@@ -28,7 +28,7 @@ import {TakerTraitsLib} from "@1inch/swap-vm/src/libs/TakerTraits.sol";
 /// delta and is pool-only. Holds no funds between swaps and has no owner powers over user funds.
 /// @dev Implements `IHooks` directly: v4-periphery at lib/v4-periphery no longer ships `BaseHook` (D-17).
 /// Callbacks other than `beforeSwap` revert; the PoolManager never calls them because the address flags are off.
-contract ConfluenceHook is IHooks {
+contract ConfluenceHookV1 is IHooks {
     using PoolIdLibrary for PoolKey;
     using SafeERC20 for IERC20;
     using SafeCast for uint256;

@@ -16,8 +16,8 @@ import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiqui
 import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
-import {ConfluenceHook} from "../src/ConfluenceHook.sol";
-import {PoolPriceBandExtruction} from "../src/PoolPriceBandExtruction.sol";
+import {ConfluenceHookV1 as ConfluenceHook} from "../src/v1/ConfluenceHookV1.sol";
+import {PoolPriceBandExtruction} from "../src/v1/PoolPriceBandExtruction.sol";
 import {MockMUMB} from "../src/mocks/MockMUMB.sol";
 import {StrategyLib} from "../test/base/StrategyLib.sol";
 

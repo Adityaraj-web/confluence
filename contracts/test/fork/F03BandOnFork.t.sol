@@ -16,7 +16,7 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
-import {PoolPriceBandExtruction} from "../../src/PoolPriceBandExtruction.sol";
+import {PoolPriceBandExtruction} from "../../src/v1/PoolPriceBandExtruction.sol";
 import {ForkBase} from "../base/ForkBase.t.sol";
 import {StrategyLib} from "../base/StrategyLib.sol";
 import {TakerHelper} from "../base/TakerHelper.sol";
