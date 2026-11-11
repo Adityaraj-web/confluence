@@ -141,7 +141,10 @@ contract V200UnichainTakerTest is Test, StrategyLib {
     ///      32-byte immutables: WETH, the EIP-712 chain id and the EIP-712 domain separator. Swap those in mainnet's
     ///      code for Unichain's values; every other byte must already match, or the hashes differ and this fails.
     function _assertSameRouterModuloImmutables() internal {
-        bytes memory code = _mainnetRouterCode();
+        (bytes memory code, bytes memory aquaCode) = _mainnetCode();
+
+        // Aqua has no chain-specific immutables: its code must be byte-identical.
+        assertEq(keccak256(AQUA.code), keccak256(aquaCode), "Unichain Aqua code != mainnet Aqua code");
 
         (, string memory name, string memory version, uint256 chainId, address verifying,,) =
             SwapVM(payable(ROUTER)).eip712Domain();
@@ -192,11 +195,12 @@ contract V200UnichainTakerTest is Test, StrategyLib {
         require(hits == 1, "immutable word not found exactly once in mainnet router code");
     }
 
-    function _mainnetRouterCode() internal returns (bytes memory code) {
+    function _mainnetCode() internal returns (bytes memory routerCode, bytes memory aquaCode) {
         uint256 back = vm.activeFork();
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"), vm.envUint("FORK_BLOCK"));
         assertEq(block.chainid, 1, "not mainnet");
-        code = ROUTER.code;
+        routerCode = ROUTER.code;
+        aquaCode = AQUA.code;
         vm.selectFork(back);
     }
 }

@@ -174,6 +174,25 @@ class V1Numbers(unittest.TestCase):
         res = venues.pool_swap_exact_in(venues.v1_demo_pool(usdc_is_c0), 2_000 * 10**6, zero_for_one=usdc_is_c0)
         self.assertEqual(res.amount_out, 1946313880914421030318)
 
+    def test_pool_walk_stops_at_word_edges(self):
+        """777 MUMB -> USDC crosses the tick bitmap's word edge (tick 276420): two swap steps, each rounded, so
+        the output differs by wei from a walk that jumps to the next initialised tick. USDC -> MUMB stays in
+        one word. V200ForkOracle checks the chain agrees with the two-step walk."""
+        state = venues.v1_demo_pool(True)
+        edge = venues.pool_swap_exact_in(state, 777 * 10**18, zero_for_one=False)
+        jump = venues.pool_swap_exact_in(state, 777 * 10**18, zero_for_one=False, word_edges=False)
+        self.assertEqual((edge.steps, jump.steps), (2, 1))
+        self.assertNotEqual(edge.amount_out, jump.amount_out)
+        self.assertLessEqual(abs(edge.amount_out - jump.amount_out), 1)
+        self.assertEqual(venues.pool_swap_exact_in(state, 1_000 * 10**6, zero_for_one=True).steps, 1)
+
+    def test_other_currency_order_gives_a_different_number(self):
+        """Why V1_USDC_IS_CURRENCY0 matters (D-28): the same pool built with MUMB as currency0."""
+        state = venues.v1_demo_pool(False)
+        res = venues.pool_swap_exact_in(state, 1_000 * 10**6, zero_for_one=False)
+        self.assertEqual(res.amount_out, 984709647489642186967)
+        self.assertNotEqual(res.amount_out, V1_POOL_ONLY_WEI)
+
     def test_v1_hinted_legs_match_d21(self):
         usdc_is_c0 = gen_vectors.V1_USDC_IS_CURRENCY0
         state = venues.v1_demo_pool(usdc_is_c0)

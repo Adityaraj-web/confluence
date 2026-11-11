@@ -42,6 +42,7 @@ library Vectors {
         uint128 liquidity;
         int24 tick;
         uint24 feePips;
+        int24 tickSpacing;
         bool zeroForOne;
         int24[] ticks;
         int128[] liquidityNets;
@@ -142,6 +143,7 @@ library Vectors {
         p.liquidity = uint128(vm.parseJsonUint(json, string.concat(path, ".liquidity")));
         p.tick = int24(vm.parseJsonInt(json, string.concat(path, ".tick")));
         p.feePips = uint24(vm.parseJsonUint(json, string.concat(path, ".feePips")));
+        p.tickSpacing = int24(vm.parseJsonInt(json, string.concat(path, ".tickSpacing")));
         p.zeroForOne = vm.parseJsonBool(json, string.concat(path, ".zeroForOne"));
         uint256 n = _arrayLength(json, string.concat(path, ".ticks"));
         p.ticks = new int24[](n);

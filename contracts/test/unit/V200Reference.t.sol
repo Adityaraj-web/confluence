@@ -89,7 +89,7 @@ contract V200ReferenceTest is Test {
     function _checkV1Demo() internal view {
         string memory json = Vectors.read(Vectors.V1_DEMO);
         uint256 n = Vectors.count(json);
-        assertEq(n, 3, "v1_demo cases");
+        assertEq(n, 4, "v1_demo cases");
         for (uint256 i; i < n; i++) {
             Vectors.V1Case memory c = Vectors.v1Case(json, i);
             string memory ctx = string.concat("v1_demo ", c.name);
@@ -99,6 +99,7 @@ contract V200ReferenceTest is Test {
             assertGt(c.pool.liquidity, 0, string.concat(ctx, ": pool liquidity"));
             assertEq(c.pool.ticks.length, 2, string.concat(ctx, ": the v1 pool has one position"));
             assertEq(c.pool.feePips, 3000, string.concat(ctx, ": pool fee"));
+            assertEq(c.pool.tickSpacing, 60, string.concat(ctx, ": tick spacing"));
             assertEq(c.hasHint, i == 0, string.concat(ctx, ": only the first case carries v1's hint"));
         }
         Vectors.V1Case memory first = Vectors.v1Case(json, 0);

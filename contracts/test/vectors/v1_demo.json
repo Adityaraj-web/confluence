@@ -16,6 +16,7 @@
         "liquidity": "81385316166712666",
         "sqrtPriceX96": "79228162514264337593543950336000000",
         "tick": 276324,
+        "tickSpacing": 60,
         "ticks": [
           {
             "liquidityNet": "81385316166712666",
@@ -29,6 +30,7 @@
         "zeroForOne": true
       },
       "poolOnlyOut": "984934194542570551127",
+      "poolOnlySteps": 1,
       "poolVenue": {
         "capIn": "2586989911",
         "feeE9": 3000000,
@@ -64,6 +66,7 @@
         "liquidity": "81385316166712666",
         "sqrtPriceX96": "79228162514264337593543950336000000",
         "tick": 276324,
+        "tickSpacing": 60,
         "ticks": [
           {
             "liquidityNet": "81385316166712666",
@@ -77,6 +80,7 @@
         "zeroForOne": true
       },
       "poolOnlyOut": "1946313880914421030318",
+      "poolOnlySteps": 1,
       "poolVenue": {
         "capIn": "2586989911",
         "feeE9": 3000000,
@@ -106,6 +110,7 @@
         "liquidity": "81385316166712666",
         "sqrtPriceX96": "79228162514264337593543950336000000",
         "tick": 276324,
+        "tickSpacing": 60,
         "ticks": [
           {
             "liquidityNet": "81385316166712666",
@@ -119,6 +124,51 @@
         "zeroForOne": false
       },
       "poolOnlyOut": "984934194",
+      "poolOnlySteps": 2,
+      "poolVenue": {
+        "capIn": "2384898948928338147013",
+        "feeE9": 3000000,
+        "x": "81385316166712666000000",
+        "y": "81385316166"
+      },
+      "priya": {
+        "cap": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "feeE9": 3000000,
+        "x": "100000000000000000000000",
+        "y": "100000000000"
+      }
+    },
+    {
+      "amount": "777000000000000000000",
+      "closedForm": {
+        "allocPool": "348630153740861135110",
+        "allocPriya": "428369846259138864890",
+        "poolLeg": "346106096",
+        "priyaLeg": "425268479",
+        "totalInt": "771374575",
+        "totalReal": "771374576.919038"
+      },
+      "name": "mumb-to-usdc-777",
+      "pool": {
+        "feePips": 3000,
+        "liquidity": "81385316166712666",
+        "sqrtPriceX96": "79228162514264337593543950336000000",
+        "tick": 276324,
+        "tickSpacing": 60,
+        "ticks": [
+          {
+            "liquidityNet": "81385316166712666",
+            "tick": 275700
+          },
+          {
+            "liquidityNet": "-81385316166712666",
+            "tick": 276900
+          }
+        ],
+        "zeroForOne": false
+      },
+      "poolOnlyOut": "767364810",
+      "poolOnlySteps": 2,
       "poolVenue": {
         "capIn": "2384898948928338147013",
         "feeE9": 3000000,
@@ -133,7 +183,7 @@
       }
     }
   ],
-  "count": 3,
+  "count": 4,
   "description": "The v1 demo pool (F04) and Priya's strategy (F05). USDC is currency0.",
   "file": "v1_demo",
   "schema": "confluence-vectors/1"

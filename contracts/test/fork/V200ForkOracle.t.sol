@@ -86,6 +86,7 @@ contract V200ForkOracleTest is ForkOracle {
         assertEq(tick, c.pool.tick, "tick");
         assertEq(lpFee, c.pool.feePips, "lpFee");
         assertEq(key.fee, c.pool.feePips, "key fee");
+        assertEq(key.tickSpacing, c.pool.tickSpacing, "tick spacing");
         assertEq(uint256(manager.getLiquidity(poolId)), uint256(c.pool.liquidity), "liquidity");
 
         assertEq(c.pool.ticks.length, 2, "model ticks");
@@ -115,5 +116,15 @@ contract V200ForkOracleTest is ForkOracle {
         Vectors.V1Case memory c3 = Vectors.v1Case(json, 2);
         assertEq(c3.amount, 1_000e18, "case 2 amount");
         assertEq(_realiseExactIn(mumbForUsdc(), c3.amount, zero)[0], c3.poolOnlyOut, "1,000 MUMB pool-only");
+    }
+
+    /// @dev 777 MUMB to USDC moves the price across the tick bitmap's word edge at tick 276420, so v4 takes two
+    ///      swap steps and rounds twice. A model that jumped straight to the next initialised tick is 1 wei off
+    ///      (reference/test_reference.py shows the two walks differ); the chain decides which is right.
+    function test_V200_forkOracleMatchesAcrossAWordEdge() public {
+        Vectors.V1Case memory c = Vectors.v1Case(Vectors.read(Vectors.V1_DEMO), 3);
+        assertEq(c.amount, 777e18, "case 3 amount");
+        uint256[] memory zero = new uint256[](1);
+        assertEq(_realiseExactIn(mumbForUsdc(), c.amount, zero)[0], c.poolOnlyOut, "777 MUMB pool-only");
     }
 }

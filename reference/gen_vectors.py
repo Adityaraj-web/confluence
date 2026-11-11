@@ -47,7 +47,7 @@ CROSSING_AMOUNTS_OUT = (3 * 10**20, 4 * 10**20)
 
 def crossing_pool():
     liq = sum(net for t, net in CROSSING_TICKS if t < 0)
-    return vn.PoolState(vn.Q96, liq, 0, 3000, CROSSING_TICKS)
+    return vn.PoolState(vn.Q96, liq, 0, 3000, CROSSING_TICKS, 60)
 
 
 # --------------------------------------------------------------------------- serialisation
@@ -163,6 +163,7 @@ def pool_json(state, zero_for_one):
         "liquidity": s(state.liquidity),
         "tick": state.tick,
         "feePips": state.fee_pips,
+        "tickSpacing": state.tick_spacing,
         "zeroForOne": zero_for_one,
         "ticks": [{"tick": t, "liquidityNet": s(n)} for t, n in state.ticks],
     }
@@ -233,6 +234,8 @@ def v1_demo_file():
         ("usdc-to-mumb-1000", 1_000 * 10**6, c0, priya_usdc_in),
         ("usdc-to-mumb-2000", 2_000 * 10**6, c0, priya_usdc_in),
         ("mumb-to-usdc-1000", 1_000 * 10**18, not c0, priya_mumb_in),
+        # Crosses a 256-tick word edge of v4's tick bitmap (tick 276420): the swap takes two steps, each rounded.
+        ("mumb-to-usdc-777", 777 * 10**18, not c0, priya_mumb_in),
     ):
         state = vn.v1_demo_pool(c0)
         seg_int = vn.pool_segments(state, zfo, vn.MAX_TICK_RANGES, integer=True)[0]
@@ -253,6 +256,7 @@ def v1_demo_file():
                 "poolVenue": {"x": s(seg_int.x), "y": s(seg_int.y), "feeE9": seg_int.fee_e9, "capIn": s(seg_int.cap_in)},
                 "priya": venue_json(priya),
                 "poolOnlyOut": s(pool_only.amount_out),
+                "poolOnlySteps": pool_only.steps,
                 "closedForm": {
                     "allocPool": s(pool_alloc),
                     "allocPriya": s(priya_alloc),

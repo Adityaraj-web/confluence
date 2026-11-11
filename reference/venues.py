@@ -281,6 +281,7 @@ class PoolState(NamedTuple):
     tick: int
     fee_pips: int
     ticks: tuple
+    tick_spacing: int
 
 
 def _next_initialized(state_ticks, tick, zero_for_one):
@@ -291,6 +292,27 @@ def _next_initialized(state_ticks, tick, zero_for_one):
         return max(c) if c else None
     c = [t for t, _ in state_ticks if t > tick]
     return min(c) if c else None
+
+
+def _next_in_word(state, tick, zero_for_one):
+    """TickBitmap.nextInitializedTickWithinOneWord: (tick, initialised). The nearest initialised tick in the
+    same 256-compressed-tick word as the search start, or that word's edge when there is none. The swap loop
+    steps to the edge too, and each step rounds on its own, so the exact walk must do the same."""
+    sp = state.tick_spacing
+    initialised = {t for t, _ in state.ticks}
+    compressed = tick // sp  # floors toward -inf, like TickBitmap.compress
+    if zero_for_one:
+        low = (compressed >> 8) << 8
+        for c in range(compressed, low - 1, -1):
+            if c * sp in initialised:
+                return c * sp, True
+        return low * sp, False
+    start = compressed + 1
+    high = ((start >> 8) << 8) + 255
+    for c in range(start, high + 1):
+        if c * sp in initialised:
+            return c * sp, True
+    return high * sp, False
 
 
 def _net(state_ticks, tick):
@@ -304,24 +326,32 @@ class SwapResult(NamedTuple):
     liquidity: int
     tick: int
     crossed: int  # initialised ticks crossed
+    steps: int  # swap-loop steps (computeSwapStep calls), word-edge stops included
 
 
-def _pool_swap(state, amount, zero_for_one, exact_in, sqrt_limit):
+def _pool_swap(state, amount, zero_for_one, exact_in, sqrt_limit, word_edges=True):
+    """``word_edges=False`` jumps straight to the nearest initialised tick; it exists only so a test can show
+    that the difference is real (a swap that crosses a word edge differs by wei)."""
     if sqrt_limit is None:
         sqrt_limit = MIN_SQRT_PRICE + 1 if zero_for_one else MAX_SQRT_PRICE - 1
     sqrt_p, liq, tick = state.sqrt_price, state.liquidity, state.tick
     remaining = amount  # positive: input left (exact in) or output left (exact out)
-    total_in = total_out = crossed = 0
+    total_in = total_out = crossed = steps = 0
     while remaining != 0 and sqrt_p != sqrt_limit:
-        tick_next = _next_initialized(state.ticks, tick, zero_for_one)
-        if tick_next is None:
-            tick_next = MIN_TICK if zero_for_one else MAX_TICK
+        if word_edges:
+            tick_next, initialised = _next_in_word(state, tick, zero_for_one)
+        else:
+            tick_next = _next_initialized(state.ticks, tick, zero_for_one)
+            initialised = tick_next is not None
+            if tick_next is None:
+                tick_next = MIN_TICK if zero_for_one else MAX_TICK
         tick_next = max(MIN_TICK, min(MAX_TICK, tick_next))
         sqrt_next_tick = sqrt_price_at_tick(tick_next)
         target = (
             max(sqrt_next_tick, sqrt_limit) if zero_for_one else min(sqrt_next_tick, sqrt_limit)
         )
         step = compute_swap_step(sqrt_p, target, liq, -remaining if exact_in else remaining, state.fee_pips)
+        steps += 1
         if exact_in:
             remaining -= step.amount_in + step.fee_amount
         else:
@@ -330,23 +360,23 @@ def _pool_swap(state, amount, zero_for_one, exact_in, sqrt_limit):
         total_out += step.amount_out
         sqrt_p = step.sqrt_next
         if sqrt_p == sqrt_next_tick:
-            if tick_next in dict(state.ticks):
+            if initialised and tick_next in dict(state.ticks):
                 net = _net(state.ticks, tick_next)
                 liq += -net if zero_for_one else net
                 crossed += 1
             tick = tick_next - 1 if zero_for_one else tick_next
         # else: the swap ended inside the range; the loop exits because `remaining` is 0
-    return SwapResult(total_in, total_out, sqrt_p, liq, tick, crossed)
+    return SwapResult(total_in, total_out, sqrt_p, liq, tick, crossed, steps)
 
 
-def pool_swap_exact_in(state, amount_in, zero_for_one, sqrt_limit=None):
+def pool_swap_exact_in(state, amount_in, zero_for_one, sqrt_limit=None, word_edges=True):
     """v4 Pool.swap with amountSpecified = -amount_in, fee on the input, no protocol fee."""
-    return _pool_swap(state, amount_in, zero_for_one, True, sqrt_limit)
+    return _pool_swap(state, amount_in, zero_for_one, True, sqrt_limit, word_edges)
 
 
-def pool_swap_exact_out(state, amount_out, zero_for_one, sqrt_limit=None):
+def pool_swap_exact_out(state, amount_out, zero_for_one, sqrt_limit=None, word_edges=True):
     """v4 Pool.swap with amountSpecified = +amount_out."""
-    return _pool_swap(state, amount_out, zero_for_one, False, sqrt_limit)
+    return _pool_swap(state, amount_out, zero_for_one, False, sqrt_limit, word_edges)
 
 
 # --------------------------------------------------------------------------- the pool as venues
@@ -367,6 +397,11 @@ class Segment(NamedTuple):
 
 def pool_segments(state, zero_for_one, max_ranges=MAX_TICK_RANGES, integer=False):
     """The pool's tick ranges in the swap's direction, up to ``max_ranges`` with liquidity.
+
+    A segment is a liquidity range between initialised ticks. The exact walk (`pool_swap_*`) also stops at the
+    256-tick word edges of v4's tick bitmap, but those stops split no range: liquidity and the curve are the
+    same on both sides, so the solver sees one segment. How V2-02's on-chain PoolVenue counts ranges toward
+    MAX_TICK_RANGES is that spec's decision.
 
     ``integer=False``: Decimal reserves (L / sqrtP and L * sqrtP) and caps. ``integer=True``: floored reserves
     and the integer caps from the v4 delta functions (what PoolVenue will read on chain)."""
@@ -439,4 +474,4 @@ def v1_demo_pool(usdc_is_currency0):
     lower, upper = centre - V1_HALF_RANGE, centre + V1_HALF_RANGE
     a0, a1 = (V1_SEED_USDC, V1_SEED_MUMB) if usdc_is_currency0 else (V1_SEED_MUMB, V1_SEED_USDC)
     liq = liquidity_for_amounts(sqrt_p, sqrt_price_at_tick(lower), sqrt_price_at_tick(upper), a0, a1)
-    return PoolState(sqrt_p, liq, tick, V1_FEE_PIPS, ((lower, liq), (upper, -liq)))
+    return PoolState(sqrt_p, liq, tick, V1_FEE_PIPS, ((lower, liq), (upper, -liq)), V1_TICK_SPACING)
