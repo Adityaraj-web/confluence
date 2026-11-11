@@ -10,3 +10,6 @@ deployments/last-demo.json
 
 # F10 checkpoint screenshots
 web/screenshots/
+
+# Python bytecode (reference/ tests)
+__pycache__/

@@ -9,7 +9,7 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 
-import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
+import {ConfluenceHookV1 as ConfluenceHook} from "../../src/v1/ConfluenceHookV1.sol";
 import {ConfluenceBase} from "../base/ConfluenceBase.t.sol";
 
 /// @notice F06 follow-up (D-20): `registerOrder` refuses an `order.data` longer than `MAX_ORDER_DATA_BYTES`, because

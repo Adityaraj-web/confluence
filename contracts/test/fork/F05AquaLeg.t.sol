@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ISwapVM} from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 
-import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
+import {ConfluenceHookV1 as ConfluenceHook} from "../../src/v1/ConfluenceHookV1.sol";
 import {ConfluenceBase} from "../base/ConfluenceBase.t.sol";
 
 /// @notice F05: the hook fills the hinted part of an exact-input swap from Priya's Aqua strategy inside

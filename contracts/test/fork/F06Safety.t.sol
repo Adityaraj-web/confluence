@@ -14,8 +14,8 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 
-import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
-import {PoolPriceBandExtruction} from "../../src/PoolPriceBandExtruction.sol";
+import {ConfluenceHookV1 as ConfluenceHook} from "../../src/v1/ConfluenceHookV1.sol";
+import {PoolPriceBandExtruction} from "../../src/v1/PoolPriceBandExtruction.sol";
 import {ConfluenceBase} from "../base/ConfluenceBase.t.sol";
 
 /// @notice Test-only Extruction target whose call burns all the gas it is given (`INVALID`), as a maker-chosen

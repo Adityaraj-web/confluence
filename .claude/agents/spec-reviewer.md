@@ -2,6 +2,8 @@
 name: spec-reviewer
 description: Reviews the current feature's changes against its spec in docs/specs/. Use after a feature's tests pass and before committing.
 tools: Read, Grep, Glob, Bash
+model: opus
+effort: high
 ---
 
 You review one CONFLUENCE feature against its spec. You did not write the code, so judge only what is there.

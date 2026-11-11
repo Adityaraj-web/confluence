@@ -17,7 +17,7 @@ import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiqui
 import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
-import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
+import {ConfluenceHookV1 as ConfluenceHook} from "../../src/v1/ConfluenceHookV1.sol";
 import {ForkBase} from "./ForkBase.t.sol";
 
 /// @notice Pool setup for F04 and later: the hook at a mined address, the MUMB/USDC pool at the anchor
