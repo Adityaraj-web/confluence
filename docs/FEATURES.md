@@ -41,7 +41,7 @@ Solo build by Adityaraj from Nov 11, 2026. Design: `docs/ARCHITECTURE-v2.md`. Bu
 
 | ID | Spec | Milestone | Depends on | Status | Gate |
 | --- | --- | --- | --- | --- | --- |
-| V2-00 | Reference model and repo prep | M1 Maths core | — | Todo | **G0: ungated taker on Unichain (first test)** |
+| V2-00 | Reference model and repo prep | M1 Maths core | — | Done | **G0 passed** (D-28) |
 | V2-01 | SplitMath | M1 | V2-00 | Todo | |
 | V2-02 | PoolVenue | M1 | V2-01 | Todo | M1: split = brute force and fork oracle |
 | V2-03 | Anchor | M2 Guard | V2-00 | Todo | |
