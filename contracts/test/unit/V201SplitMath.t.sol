@@ -356,8 +356,9 @@ contract V201SplitMathTest is Test {
         }
         if (bestCost == NONE) return;
         if (b[0] >= v[0].y) {
-            // The pool's floored remainder reached its own reserve: only possible with a dust-sized pool (D-29).
-            assertEq(domain, ANYPRICE, "out: pool remainder reached its reserve on a comparable-price venue");
+            // The pool's floored remainder reached its own reserve. Happens when the exact optimum leaves the pool
+            // under `n` wei of reserve: a dust-sized pool, or a trade that nearly drains every venue (D-29). The
+            // remainder rule puts it at most `n` wei past that; a plain curve cannot price it, so no cost check.
             assertLe(b[0] - (v[0].y - 1), n, "out: pool remainder past its reserve by more than rounding");
             return;
         }
