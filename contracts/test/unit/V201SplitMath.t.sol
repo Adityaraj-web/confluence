@@ -37,8 +37,9 @@ contract V201SplitMathTest is Test {
     uint256 internal constant MAX_AMOUNT = type(uint128).max;
     uint256 internal constant NONE = type(uint256).max;
 
-    /// @dev Measured in step 7 of the V2-01 plan; the worst of the three 4-venue solves must stay under it.
-    uint256 internal constant GAS_CEILING_4V = 0;
+    /// @dev The worst of the three 4-venue solves must stay under it. Measured (via_ir, optimizer 700): exact in 48,582;
+    ///      exact out 43,585; exact in with one cap binding (two passes) 62,695. Ceiling = worst + about 12% (PROGRESS).
+    uint256 internal constant GAS_CEILING_4V = 70_000;
 
     // Fuzz domains (D-29).
     uint8 internal constant GENERAL = 0; // anything inside the envelope, some unusable venues
@@ -362,8 +363,12 @@ contract V201SplitMathTest is Test {
     {
         if (i == 0 ? a[0] <= v.length : a[i] == 0) return false;
         if (i > 0 && a[i] >= v[i].cap) return false;
-        // Exact out: below 1e9 wei left in the reserve, one wei moves the marginal by more than 1e-6.
-        if (!exactIn && v[i].y - a[i] < 1e9) return false;
+        if (!exactIn) {
+            // The pool past its own reserve (caps left a remainder the free venues could not cover): no marginal (D-29).
+            if (a[i] >= v[i].y) return false;
+            // Below 1e9 wei left in the reserve, one wei moves the marginal by more than 1e-6.
+            if (v[i].y - a[i] < 1e9) return false;
+        }
         return true;
     }
 
