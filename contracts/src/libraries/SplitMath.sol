@@ -98,6 +98,7 @@ library SplitMath {
         uint256 m; // number of usable venues
         bool[] pinned;
         uint256[] alloc;
+        uint256 remaining; // amount not yet pinned
     }
 
     function _solve(Venue[] memory v, uint256 amount, bool exactIn) private pure returns (uint256[] memory out) {
@@ -110,33 +111,40 @@ library SplitMath {
         }
 
         Work memory w = _prepare(v, exactIn);
-        uint256 remaining = amount;
+        w.remaining = amount;
         for (uint256 pass; pass < n; pass++) {
-            (uint256[] memory part, bool feasible) = exactIn ? _sharesIn(v, w, remaining) : _sharesOut(v, w, remaining);
+            (uint256[] memory part, bool feasible) =
+                exactIn ? _sharesIn(v, w, w.remaining) : _sharesOut(v, w, w.remaining);
             if (!feasible) break; // the free venues get nothing; the pool takes what is left
-            bool over = false;
-            for (uint256 j; j < w.m; j++) {
-                uint256 i = w.order[j];
-                if (!w.pinned[i] && part[i] > v[i].cap) {
-                    over = true;
-                    uint256 c = v[i].cap < remaining ? v[i].cap : remaining;
-                    w.alloc[i] = c;
-                    w.pinned[i] = true;
-                    remaining -= c;
-                }
-            }
-            if (!over) {
-                for (uint256 j; j < w.m; j++) {
-                    uint256 i = w.order[j];
-                    if (!w.pinned[i]) w.alloc[i] = part[i];
-                }
-                break;
+            if (!_pinOver(v, w, part)) break; // nothing over its cap: `part` is the answer
+        }
+        _assemble(w, amount, out);
+    }
+
+    /// @dev Pins every free venue whose share is over its cap at the cap (or at what is left, whichever is smaller).
+    ///      Returns false, after taking `part` for the free venues, when none is over.
+    function _pinOver(Venue[] memory v, Work memory w, uint256[] memory part) private pure returns (bool over) {
+        for (uint256 j; j < w.m; j++) {
+            uint256 i = w.order[j];
+            if (!w.pinned[i] && part[i] > v[i].cap) {
+                over = true;
+                uint256 c = v[i].cap < w.remaining ? v[i].cap : w.remaining;
+                w.alloc[i] = c;
+                w.pinned[i] = true;
+                w.remaining -= c;
             }
         }
+        if (over) return true;
+        for (uint256 j; j < w.m; j++) {
+            uint256 i = w.order[j];
+            if (!w.pinned[i]) w.alloc[i] = part[i];
+        }
+    }
 
-        // Makers keep their floored shares (clamped so they never pass the amount); index 0 takes the remainder.
+    /// @dev Makers keep their floored shares (clamped so they never pass the amount); index 0 takes the remainder.
+    function _assemble(Work memory w, uint256 amount, uint256[] memory out) private pure {
         uint256 sum = 0;
-        for (uint256 i = 1; i < n; i++) {
+        for (uint256 i = 1; i < w.n; i++) {
             uint256 x = w.alloc[i];
             if (x > amount - sum) x = amount - sum;
             out[i] = x;

@@ -37,8 +37,8 @@ contract V201SplitMathTest is Test {
     uint256 internal constant MAX_AMOUNT = type(uint128).max;
     uint256 internal constant NONE = type(uint256).max;
 
-    /// @dev The worst of the three 4-venue solves must stay under it. Measured (via_ir, optimizer 700): exact in 48,582;
-    ///      exact out 43,585; exact in with one cap binding (two passes) 62,695. Ceiling = worst + about 12% (PROGRESS).
+    /// @dev The worst of the three 4-venue solves must stay under it. Measured (via_ir, optimizer 700): exact in 48,726;
+    ///      exact out 43,730; exact in with one cap binding (two passes) 62,938. Ceiling = worst + about 11% (PROGRESS).
     uint256 internal constant GAS_CEILING_4V = 70_000;
 
     // Fuzz domains (D-29).
@@ -177,6 +177,45 @@ contract V201SplitMathTest is Test {
             assertEq(_sum(a), amount, "sum");
             if (outside) {
                 assertEq(a[0], amount, "outside the envelope: the pool takes everything");
+            }
+        }
+    }
+
+    /// @dev Each envelope edge on its own, with ordinary venues that would otherwise get a share (D-29). The fuzz above
+    ///      rarely draws an out-of-range amount together with usable in-range venues; a mutation dropping the amount
+    ///      check survived it.
+    function test_V201_outsideEnvelopeIsPoolOnly() public pure {
+        SplitMath.Venue[] memory v = new SplitMath.Venue[](3);
+        v[0] = SplitMath.Venue(10_000e18, 10_000e18, 3_000_000, NONE);
+        v[1] = SplitMath.Venue(10_000e18, 10_100e18, 500_000, NONE);
+        v[2] = SplitMath.Venue(10_000e18, 10_050e18, 1_000_000, NONE);
+        // Control: inside the envelope the makers are used.
+        uint256[] memory a = SplitMath.solveExactIn(v, 1_000e18);
+        assertGt(a[1], 0, "control: maker 1 used");
+
+        _assertPoolOnly(v, MAX_AMOUNT + 1, "amount = 2^128");
+        _assertPoolOnly(v, type(uint256).max, "amount = max");
+        v[2].x = MAX_AMOUNT + 1;
+        _assertPoolOnly(v, 1_000e18, "x = 2^128");
+        v[2].x = 10_000e18;
+        v[1].y = MAX_AMOUNT + 1;
+        _assertPoolOnly(v, 1_000e18, "y = 2^128");
+        v[1].y = 10_100e18;
+
+        SplitMath.Venue[] memory nine = new SplitMath.Venue[](9);
+        for (uint256 i; i < 9; i++) {
+            nine[i] = v[i % 3];
+        }
+        _assertPoolOnly(nine, 1_000e18, "9 venues");
+    }
+
+    function _assertPoolOnly(SplitMath.Venue[] memory v, uint256 amount, string memory ctx) internal pure {
+        for (uint256 mode; mode < 2; mode++) {
+            uint256[] memory a = _solve(v, amount, mode == 0);
+            assertEq(a.length, v.length, ctx);
+            assertEq(a[0], amount, string.concat(ctx, ": pool-only"));
+            for (uint256 i = 1; i < a.length; i++) {
+                assertEq(a[i], 0, string.concat(ctx, ": maker must get zero"));
             }
         }
     }
