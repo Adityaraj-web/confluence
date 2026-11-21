@@ -140,7 +140,22 @@ contract V201SplitMathTest is Test, SplitHelpers {
         _neverWorse(seed, amountSeed, ANYPRICE);
     }
 
+    /// @dev Non-vacuity (V2-02, D-30): a run counts only if both of its solves compare at least two free active
+    ///      venues. Runs that compare fewer still pass every check above, then are rejected by `vm.assume`; Foundry
+    ///      fails the test when rejects outnumber accepted runs (runs = max-test-rejects), i.e. when fewer than about
+    ///      half the runs compare two or more. Foundry resets storage between runs, so its reject counter is the count.
+    /// forge-config: default.fuzz.runs = 1000
+    /// forge-config: default.fuzz.max-test-rejects = 1000
     function testFuzz_V201_equalMarginals(uint256 seed, uint256 amountSeed) public pure {
+        (uint256 cmpIn, uint256 cmpOut) = _equalMarginalsCase(seed, amountSeed);
+        vm.assume(cmpIn >= 2 && cmpOut >= 2);
+    }
+
+    function _equalMarginalsCase(uint256 seed, uint256 amountSeed)
+        internal
+        pure
+        returns (uint256 cmpIn, uint256 cmpOut)
+    {
         uint256 n = 1 + seed % 8;
         SplitMath.Venue[] memory v = _venues(seed, n, WIDE);
         for (uint256 mode; mode < 2; mode++) {
@@ -152,7 +167,8 @@ contract V201SplitMathTest is Test, SplitHelpers {
             _randomCaps(v, seed ^ mode, amount);
             uint256[] memory a = _solve(v, amount, exactIn);
             assertEq(_sum(a), amount, "sum");
-            _checkMarginals(v, a, exactIn);
+            if (exactIn) cmpIn = _checkMarginals(v, a, true);
+            else cmpOut = _checkMarginals(v, a, false);
         }
     }
 
@@ -362,7 +378,12 @@ contract V201SplitMathTest is Test, SplitHelpers {
 
     /// @dev Exact-in: (x + g a) / sqrt(g x y) is the same for every free active venue (equal marginals).
     ///      Exact-out: (y - b) sqrt(g) / sqrt(x y) is. 1e-6 on the marginal is 5e-7 on these (marginal ~ 1/h^2).
-    function _checkMarginals(SplitMath.Venue[] memory v, uint256[] memory a, bool exactIn) internal pure {
+    ///      Returns how many free active venues were compared (0 when every venue is pinned at its cap).
+    function _checkMarginals(SplitMath.Venue[] memory v, uint256[] memory a, bool exactIn)
+        internal
+        pure
+        returns (uint256 compared)
+    {
         uint256 n = v.length;
         uint256 ref;
         for (uint256 i; i < n; i++) {
@@ -371,9 +392,10 @@ contract V201SplitMathTest is Test, SplitHelpers {
                 break;
             }
         }
-        if (ref == 0) return; // every venue pinned at its cap
+        if (ref == 0) return 0; // every venue pinned at its cap
         for (uint256 i; i < n; i++) {
             if (_isFreeActive(v, a, i, exactIn)) {
+                compared++;
                 assertApproxEqRel(_h(v[i], a[i], exactIn), ref, 5e11, "marginals differ");
             } else if (a[i] <= (i == 0 ? n : 0) && v[i].cap > 0) {
                 // Unused (or only the pool's rounding dust): it must not start better than the level.
