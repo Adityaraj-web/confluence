@@ -6,6 +6,7 @@ import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SplitMath} from "../../src/libraries/SplitMath.sol";
 import {Vectors} from "../base/Vectors.sol";
+import {SplitHelpers} from "../base/SplitHelpers.sol";
 
 /// @dev External wrapper so gas can be measured around one call. Test-only.
 contract SplitMathHarness {
@@ -32,8 +33,7 @@ contract SplitMathHarness {
 
 /// @notice V2-01 acceptance: SplitMath against the V2-00 vectors and its fuzzed properties.
 /// @dev Index 0 is the pool everywhere (it takes the remainder). Tolerances and fuzz domains are recorded in D-29.
-contract V201SplitMathTest is Test {
-    uint256 internal constant E9 = 1e9;
+contract V201SplitMathTest is Test, SplitHelpers {
     uint256 internal constant MAX_AMOUNT = type(uint128).max;
     uint256 internal constant NONE = type(uint256).max;
 
@@ -299,18 +299,6 @@ contract V201SplitMathTest is Test {
         return SplitMath.Venue(w.x, w.y, w.feeE9, w.cap);
     }
 
-    /// @dev SwapVM exact in: flat fee rounded up on the input, then XYC rounded down (Fee.sol:89, XYCSwap.sol:22).
-    function _cpOutInt(SplitMath.Venue memory v, uint256 a) internal pure returns (uint256) {
-        uint256 net = a - Math.ceilDiv(a * v.feeE9, E9);
-        return FullMath.mulDiv(net, v.y, v.x + net);
-    }
-
-    /// @dev SwapVM exact out: XYC input rounded up, then the fee grossed up, rounded up (XYCSwap.sol:28, Fee.sol:95).
-    function _cpInInt(SplitMath.Venue memory v, uint256 b) internal pure returns (uint256) {
-        uint256 net = FullMath.mulDivRoundingUp(b, v.x, v.y - b);
-        return FullMath.mulDivRoundingUp(net, E9, E9 - v.feeE9);
-    }
-
     // =====================================================================================================
     // Property helpers
     // =====================================================================================================
@@ -425,20 +413,6 @@ contract V201SplitMathTest is Test {
         }
     }
 
-    /// @dev Exact curve output, one floor: floor(y g a / (x 1e9 + g a)).
-    function _outFloor(SplitMath.Venue memory v, uint256 a) internal pure returns (uint256) {
-        if (a == 0) return 0;
-        uint256 g = E9 - v.feeE9;
-        return FullMath.mulDiv(v.y * g, a, v.x * E9 + g * a);
-    }
-
-    /// @dev Exact curve input, one ceil: ceil(x 1e9 b / (g (y - b))).
-    function _inCeil(SplitMath.Venue memory v, uint256 b) internal pure returns (uint256) {
-        if (b == 0) return 0;
-        uint256 g = E9 - v.feeE9;
-        return FullMath.mulDivRoundingUp(v.x * E9, b, g * (v.y - b));
-    }
-
     /// @dev Marginal input per output wei at `b` (capped below the reserve), rounded up, saturating.
     function _marginalCost(SplitMath.Venue memory v, uint256 b) internal pure returns (uint256) {
         if (b >= v.y) b = v.y - 1;
@@ -504,21 +478,6 @@ contract V201SplitMathTest is Test {
         return _logUniform(w >> 8, 1, MAX_AMOUNT);
     }
 
-    /// @dev A value in [lo, hi] whose bit length is uniform over the range's bit lengths.
-    function _logUniform(uint256 w, uint256 lo, uint256 hi) internal pure returns (uint256 r) {
-        if (hi <= lo) return lo;
-        uint256 loBits = Math.log2(lo);
-        uint256 hiBits = Math.log2(hi);
-        uint256 bits = loBits + w % (hiBits - loBits + 1);
-        uint256 mantissa = uint256(keccak256(abi.encode(w)));
-        r = bits == 0 ? 1 : (1 << bits) | (mantissa & ((1 << bits) - 1));
-        if (r < lo) r = lo;
-        if (r > hi) r = hi;
-    }
-
-    function _word(uint256 seed, uint256 i, uint256 tag) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encode(seed, i, tag)));
-    }
 
     // =====================================================================================================
     // Small maths
@@ -526,12 +485,6 @@ contract V201SplitMathTest is Test {
 
     function _solve(SplitMath.Venue[] memory v, uint256 amount, bool exactIn) internal pure returns (uint256[] memory) {
         return exactIn ? SplitMath.solveExactIn(v, amount) : SplitMath.solveExactOut(v, amount);
-    }
-
-    function _sum(uint256[] memory a) internal pure returns (uint256 s) {
-        for (uint256 i; i < a.length; i++) {
-            s += a[i];
-        }
     }
 
     function _sumX(SplitMath.Venue[] memory v) internal pure returns (uint256 s) {
