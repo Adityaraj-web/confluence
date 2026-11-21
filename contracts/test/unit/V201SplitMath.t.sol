@@ -156,15 +156,20 @@ contract V201SplitMathTest is Test, SplitHelpers {
         pure
         returns (uint256 cmpIn, uint256 cmpOut)
     {
-        uint256 n = 1 + seed % 8;
-        SplitMath.Venue[] memory v = _venues(seed, n, WIDE);
+        uint256 n = 2 + seed % 7;
+        SplitMath.Venue[] memory v = _marginalsVenues(seed, n);
         for (uint256 mode; mode < 2; mode++) {
             bool exactIn = mode == 0;
             uint256 amount = exactIn
-                ? _logUniform(amountSeed, 1, _min(MAX_AMOUNT, _sumX(v)))
-                : _logUniform(amountSeed, 1, _sumY(v) / 2);
+                ? _logUniform(amountSeed, _sumX(v) / 64, _min(MAX_AMOUNT, _sumX(v)))
+                : _logUniform(amountSeed, _sumY(v) / 64, _sumY(v) / 2);
             _clearCaps(v);
-            _randomCaps(v, seed ^ mode, amount);
+            // Half the makers capped at 0 to 1.5 times their uncapped share (as respectsCaps), so some pin and some do not.
+            uint256[] memory free = _solve(v, amount, exactIn);
+            for (uint256 i = 1; i < n; i++) {
+                uint256 w = _word(seed ^ mode, i, 5);
+                if (w % 2 == 1) v[i].cap = FullMath.mulDiv(free[i], (w >> 1) % 1501, 1000);
+            }
             uint256[] memory a = _solve(v, amount, exactIn);
             assertEq(_sum(a), amount, "sum");
             if (exactIn) cmpIn = _checkMarginals(v, a, true);
@@ -472,6 +477,23 @@ contract V201SplitMathTest is Test, SplitHelpers {
                 v[i].y = _logUniform(wy, 1, MAX_AMOUNT);
                 v[i].feeE9 = uint32(wf % 5e8);
             }
+            v[i].cap = NONE;
+        }
+    }
+
+    /// @dev equalMarginals' own generator (D-30; no other test uses it). With independent WIDE prices one venue
+    ///      dominates: only 1.7% of runs compared two or more venues in both modes (2,000 fixed seeds). Here, 71%:
+    ///      one size scale per run (x in 6e11 to 2^104, y below 2^112 as `_h` needs; venues within 16x of each
+    ///      other), one price per run (y/x in 1e-2 to 1e2) with each venue within [0.8, 1.25] of it, fees below 3%.
+    function _marginalsVenues(uint256 seed, uint256 n) internal pure returns (SplitMath.Venue[] memory v) {
+        v = new SplitMath.Venue[](n);
+        uint256 scale = _logUniform(_word(seed, 0, 11), 1e13, 1 << 100);
+        uint256 price = _logUniform(_word(seed, 0, 12), 1e16, 1e20); // 1e18 = 1
+        for (uint256 i; i < n; i++) {
+            v[i].x = FullMath.mulDiv(scale, _logUniform(_word(seed, i, 1), 625e14, 16e18), 1e18);
+            uint256 d = 8e17 + _word(seed, i, 2) % 45e16; // 0.8 to 1.25
+            v[i].y = FullMath.mulDiv(FullMath.mulDiv(v[i].x, price, 1e18), d, 1e18);
+            v[i].feeE9 = uint32(_word(seed, i, 3) % 3e7);
             v[i].cap = NONE;
         }
     }
