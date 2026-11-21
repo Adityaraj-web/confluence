@@ -513,15 +513,6 @@ contract V201SplitMathTest is Test, SplitHelpers {
         }
     }
 
-    /// @dev Values biased to the envelope edge: 2^128 +- 2, small, raw, or log-uniform below 2^128.
-    function _edgy(uint256 w) internal pure returns (uint256) {
-        uint256 k = w % 5;
-        if (k == 0) return (1 << 128) - 2 + (w >> 8) % 5;
-        if (k == 1) return (w >> 8) % 1000;
-        if (k == 2) return w;
-        return _logUniform(w >> 8, 1, MAX_AMOUNT);
-    }
-
 
     // =====================================================================================================
     // Small maths

@@ -44,6 +44,9 @@ library SplitMath {
     /// @notice Most venues one solve takes (V2-01). Bounds every loop over venues and every pass.
     uint256 internal constant MAX_VENUES = 8;
 
+    /// @notice Most pool segments one piecewise solve takes (V2-02). `PoolVenue.MAX_TICK_RANGES` is this number.
+    uint256 internal constant MAX_SEGMENTS = 8;
+
     /// @notice Fee scale: 1e9 = 100% (SwapVM `BPS`, swap-vm/src/instructions/Fee.sol:17).
     uint256 internal constant FEE_SCALE = 1e9;
 
@@ -68,6 +71,30 @@ library SplitMath {
     /// @notice Cheapest split for `amountOut` output. `b[i]` is the output venue `i` gives; the parts sum to `amountOut`.
     function solveExactOut(Venue[] memory v, uint256 amountOut) internal pure returns (uint256[] memory b) {
         return _solve(v, amountOut, false);
+    }
+
+    /// @notice SKELETON (V2-02 red commit): piecewise pool, exact input.
+    function solveExactIn(Venue[] memory pool, Venue[] memory makers, uint256 amountIn)
+        internal
+        pure
+        returns (uint256[] memory a, uint256 crossed)
+    {
+        pool;
+        amountIn;
+        a = new uint256[](makers.length + 1);
+        crossed = 0;
+    }
+
+    /// @notice SKELETON (V2-02 red commit): piecewise pool, exact output.
+    function solveExactOut(Venue[] memory pool, Venue[] memory makers, uint256 amountOut)
+        internal
+        pure
+        returns (uint256[] memory b, uint256 crossed)
+    {
+        pool;
+        amountOut;
+        b = new uint256[](makers.length + 1);
+        crossed = 0;
     }
 
     /// @notice floor(sqrt(floor(a * b / d))), the product taken in 512 bits.
