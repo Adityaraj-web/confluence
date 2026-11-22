@@ -80,7 +80,11 @@ contract ConfluenceHook is IHooks {
 
     /// @notice A maker registered a strategy. `depth` is its real depth, in currency1 units at the snapshot price.
     event MakerRegistered(
-        PoolId indexed poolId, address indexed maker, bytes32 strategyHash, StrategyTemplate.Params params, uint256 depth
+        PoolId indexed poolId,
+        address indexed maker,
+        bytes32 strategyHash,
+        StrategyTemplate.Params params,
+        uint256 depth
     );
     /// @notice A maker removed its own slot, or replaced its strategy.
     event MakerUnregistered(PoolId indexed poolId, address indexed maker, bytes32 strategyHash);
@@ -165,7 +169,10 @@ contract ConfluenceHook is IHooks {
         bytes32 h = StrategyTemplate.strategyHash(
             StrategyTemplate.order(msg.sender, StrategyTemplate.program(p, poolManager, key, address(bandGuard)))
         );
+        // Only the token count is needed here; the virtual balance is read by `_state`.
+        // forge-lint: disable-next-line(unused-return)
         (, uint8 n0) = IAqua(AQUA).rawBalances(msg.sender, ROUTER, h, c0);
+        // forge-lint: disable-next-line(unused-return)
         (, uint8 n1) = IAqua(AQUA).rawBalances(msg.sender, ROUTER, h, c1);
         if (n0 == _DOCKED && n1 == _DOCKED) revert StrategyDocked(h);
         if (n0 != _TOKENS || n1 != _TOKENS) revert StrategyNotShipped(h);
@@ -177,6 +184,8 @@ contract ConfluenceHook is IHooks {
         Slot memory slot = Slot({maker: msg.sender, params: p, strategyHash: h});
         (bool own, uint256 at) = _find(slots, msg.sender);
         if (own) {
+            // Only STATICCALLs to Aqua and token views run before this event; they cannot reenter.
+            // forge-lint: disable-next-line(reentrancy-events)
             emit MakerUnregistered(id, msg.sender, slots[at].strategyHash);
             slots[at] = slot;
         } else if (slots.length < MAX_STRATEGIES) {
@@ -184,9 +193,13 @@ contract ConfluenceHook is IHooks {
         } else {
             (uint256 idx, uint256 smallest, EvictReason reason) = _smallest(slots, c0, c1, snap);
             if (depth <= smallest) revert DepthTooLow(depth, smallest);
+            // Only STATICCALLs to Aqua and token views run before this event; they cannot reenter.
+            // forge-lint: disable-next-line(reentrancy-events)
             emit MakerEvicted(id, slots[idx].maker, slots[idx].strategyHash, reason);
             slots[idx] = slot;
         }
+        // Only STATICCALLs to Aqua and token views run before this event; they cannot reenter.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit MakerRegistered(id, msg.sender, h, p, depth);
     }
 
@@ -199,6 +212,8 @@ contract ConfluenceHook is IHooks {
         if (!found) revert NotRegistered(msg.sender);
         bytes32 h = slots[at].strategyHash;
         _remove(slots, at);
+        // Only STATICCALLs to Aqua and token views run before this event; they cannot reenter.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit MakerUnregistered(id, msg.sender, h);
     }
 
@@ -217,6 +232,8 @@ contract ConfluenceHook is IHooks {
         else if (depth == 0) reason = EvictReason.NO_DEPTH;
         else revert NotEvictable(maker);
         _remove(slots, at);
+        // Only STATICCALLs to Aqua and token views run before this event; they cannot reenter.
+        // forge-lint: disable-next-line(reentrancy-events)
         emit MakerEvicted(id, maker, h, reason);
     }
 
@@ -230,9 +247,8 @@ contract ConfluenceHook is IHooks {
         Slot[] storage slots = _slots[id];
         (bool found, uint256 at) = _find(slots, maker);
         if (!found) revert NotRegistered(maker);
-        (depth,) = _state(
-            Currency.unwrap(key.currency0), Currency.unwrap(key.currency1), maker, slots[at].strategyHash, snap
-        );
+        (depth,) =
+            _state(Currency.unwrap(key.currency0), Currency.unwrap(key.currency1), maker, slots[at].strategyHash, snap);
     }
 
     /// @notice The registered strategies of a pool, in slot order. Anyone may call.
@@ -289,7 +305,10 @@ contract ConfluenceHook is IHooks {
         view
         returns (uint256 depth, bool docked)
     {
+        // Bounded by `MAX_STRATEGIES` (`_smallest`); the calls are STATICCALLs to Aqua and token views.
+        // forge-lint: disable-next-line(calls-loop)
         (uint256 v0, uint8 n0) = IAqua(AQUA).rawBalances(maker, ROUTER, h, c0);
+        // forge-lint: disable-next-line(calls-loop)
         (uint256 v1, uint8 n1) = IAqua(AQUA).rawBalances(maker, ROUTER, h, c1);
         if (n0 == _DOCKED && n1 == _DOCKED) return (0, true);
         if (n0 != _TOKENS || n1 != _TOKENS) return (0, false);
@@ -298,6 +317,7 @@ contract ConfluenceHook is IHooks {
 
     /// @dev What Aqua can pull of one token: the virtual balance, capped by the wallet and by the allowance to Aqua.
     function _real(address token, address maker, uint256 virtualBalance) private view returns (uint256) {
+        // forge-lint: disable-next-line(calls-loop)
         return Math.min(virtualBalance, Math.min(IERC20(token).balanceOf(maker), IERC20(token).allowance(maker, AQUA)));
     }
 
@@ -309,7 +329,7 @@ contract ConfluenceHook is IHooks {
     {
         uint256 n = Math.min(slots.length, MAX_STRATEGIES);
         smallest = type(uint256).max;
-        bool docked;
+        bool docked = false;
         for (uint256 i; i < n; i++) {
             (uint256 d, bool dk) = _state(c0, c1, slots[i].maker, slots[i].strategyHash, snap);
             if (d < smallest) (idx, smallest, docked) = (i, d, dk);

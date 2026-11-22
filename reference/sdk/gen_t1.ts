@@ -1,7 +1,8 @@
 // V2-05: golden vectors for template T1, produced by the 1inch SDK (@1inch/swap-vm-sdk 0.4.0), never by our
 // Solidity. The guard args are packed with viem, as the SDK has no BandGuardV2 type.
 // Run from the repo root:  scripts/node_modules/.bin/tsx reference/sdk/gen_t1.ts
-// Output: contracts/test/vectors/t1_sdk.json (sorted keys, no timestamps: byte-identical on rerun).
+// Output: contracts/test/sdk-vectors/t1_sdk.json (kept out of contracts/test/vectors, which V200 asserts holds exactly
+// the five files reference/gen_vectors.py writes; sorted keys, no timestamps: byte-identical on rerun).
 import { writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,5 +91,5 @@ const sort = (v: unknown): unknown =>
   Array.isArray(v) ? v.map(sort) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort((v as Record<string, unknown>)[k])])) : v;
 
 const here = dirname(fileURLToPath(import.meta.url));
-writeFileSync(resolve(here, "../../contracts/test/vectors/t1_sdk.json"), JSON.stringify(sort(out), null, 2) + "\n");
+writeFileSync(resolve(here, "../../contracts/test/sdk-vectors/t1_sdk.json"), JSON.stringify(sort(out), null, 2) + "\n");
 console.log("wrote t1_sdk.json");

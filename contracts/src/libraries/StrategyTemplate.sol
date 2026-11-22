@@ -52,7 +52,8 @@ library StrategyTemplate {
         pure
         returns (bytes memory)
     {
-        if (p.feeE9 >= FEE_SCALE) revert InvalidMakerFee(p.feeE9);
+        // forge-lint: disable-next-line(require-revert-in-loop)
+        if (p.feeE9 >= FEE_SCALE) revert InvalidMakerFee(p.feeE9); // no loop here: the lint's heuristic is wrong
         bytes memory args = BandGuardArgs.build(
             pm, key, p.bandBps, p.driftTicks, p.exclusive ? BandGuardArgs.FLAG_EXCLUSIVE : uint8(0)
         );
@@ -61,7 +62,8 @@ library StrategyTemplate {
             head,
             abi.encodePacked(OP_FLAT_FEE, uint8(4), p.feeE9),
             abi.encodePacked(OP_XYC_SWAP, uint8(0)),
-            abi.encodePacked(OP_EXTRUCTION, uint8(20 + BandGuardArgs.ARGS_LENGTH), guard, args)
+            // forge-lint: disable-next-line(unsafe-typecast)
+            abi.encodePacked(OP_EXTRUCTION, uint8(20 + BandGuardArgs.ARGS_LENGTH), guard, args) // 111 bytes, fits a uint8
         );
     }
 

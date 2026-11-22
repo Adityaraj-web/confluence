@@ -51,7 +51,7 @@ contract TemplateHarness {
 /// @notice V2-05, no fork: template T1 against the 1inch SDK's bytes (`reference/sdk/gen_t1.ts`), the opcode indices
 ///         against `AquaOpcodes._opcodes()`, the parameter bounds and the depth maths at the extreme prices.
 contract V205TemplateTest is Test, StrategyLib {
-    string internal constant FIXTURE = "test/vectors/t1_sdk.json";
+    string internal constant FIXTURE = "test/sdk-vectors/t1_sdk.json";
     address internal constant AQUA_ADDR = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
 
     TemplateHarness internal harness;
@@ -98,10 +98,7 @@ contract V205TemplateTest is Test, StrategyLib {
             address maker = vm.parseJsonAddress(j, ".maker");
 
             bytes memory prog = StrategyTemplate.program(
-                p,
-                IPoolManager(vm.parseJsonAddress(j, ".poolManager")),
-                k,
-                vm.parseJsonAddress(j, ".guard")
+                p, IPoolManager(vm.parseJsonAddress(j, ".poolManager")), k, vm.parseJsonAddress(j, ".guard")
             );
             assertEq(prog, vm.parseJsonBytes(j, string.concat(c, ".program")), string.concat("program ", names[i]));
 
@@ -200,9 +197,7 @@ contract V205TemplateTest is Test, StrategyLib {
         assertEq(harness.depthValue(huge, huge, TickMath.MAX_TICK), type(uint256).max, "saturated sum");
         assertEq(harness.depthValue(huge, type(uint256).max, 0), type(uint256).max, "sum saturates");
         // Two saturated values tie: ranking never makes a saturated newcomer win over a saturated slot.
-        assertEq(
-            harness.depthValue(huge, 1, TickMath.MAX_TICK), harness.depthValue(huge, 2, TickMath.MAX_TICK), "tie"
-        );
+        assertEq(harness.depthValue(huge, 1, TickMath.MAX_TICK), harness.depthValue(huge, 2, TickMath.MAX_TICK), "tie");
     }
 
     /// @notice At tick 0 the price is 1, so depth is the plain sum.
@@ -419,7 +414,8 @@ contract V205RegistryTest is PoolBase, StrategyLib {
         _register(m, p);
 
         // 7. shipped by another maker, with this maker named in the order: Aqua keys the shipment by the sender
-        bytes memory forged = abi.encode(StrategyTemplate.order(m, StrategyTemplate.program(p, manager, keyV2, _guard())));
+        bytes memory forged =
+            abi.encode(StrategyTemplate.order(m, StrategyTemplate.program(p, manager, keyV2, _guard())));
         vm.prank(makers[2]);
         IAqua(AQUA).ship(ROUTER, forged, _tokens(), a);
         vm.expectRevert(notShipped);
@@ -539,7 +535,9 @@ contract V205RegistryTest is PoolBase, StrategyLib {
         // (a) a huge virtual balance, a small wallet
         _fund(makers[6], 100e18, 100e6);
         _ship(makers[6], p, phantom, phantom / 1e12);
-        vm.expectRevert(abi.encodeWithSelector(ConfluenceHook.DepthTooLow.selector, _expected(100e18, 100e6, snap), smallest));
+        vm.expectRevert(
+            abi.encodeWithSelector(ConfluenceHook.DepthTooLow.selector, _expected(100e18, 100e6, snap), smallest)
+        );
         _register(makers[6], p);
 
         // (b) a huge virtual balance and wallet, a small allowance to Aqua
@@ -549,13 +547,17 @@ contract V205RegistryTest is PoolBase, StrategyLib {
         IERC20(USDC).approve(AQUA, 500e6);
         vm.stopPrank();
         _ship(makers[7], p, phantom, phantom / 1e12);
-        vm.expectRevert(abi.encodeWithSelector(ConfluenceHook.DepthTooLow.selector, _expected(500e18, 500e6, snap), smallest));
+        vm.expectRevert(
+            abi.encodeWithSelector(ConfluenceHook.DepthTooLow.selector, _expected(500e18, 500e6, snap), smallest)
+        );
         _register(makers[7], p);
 
         // (c) a huge wallet and allowance, a small virtual balance
         _fund(makers[8], phantom, phantom / 1e12);
         _ship(makers[8], p, 300e18, 300e6);
-        vm.expectRevert(abi.encodeWithSelector(ConfluenceHook.DepthTooLow.selector, _expected(300e18, 300e6, snap), smallest));
+        vm.expectRevert(
+            abi.encodeWithSelector(ConfluenceHook.DepthTooLow.selector, _expected(300e18, 300e6, snap), smallest)
+        );
         _register(makers[8], p);
         assertEq(hookV2.strategiesOf(idV2).length, 6, "no phantom got in");
 
@@ -894,12 +896,16 @@ contract V205UnichainTest is Test, StrategyLib {
         t0.approve(address(sr), type(uint256).max);
         lr.modifyLiquidity(
             key,
-            IPoolManager.ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 1e19, salt: bytes32(0)}),
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: -600, tickUpper: 600, liquidityDelta: 1e19, salt: bytes32(0)
+            }),
             ""
         );
         sr.swap(
             key,
-            IPoolManager.SwapParams({zeroForOne: true, amountSpecified: -1e15, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
+            IPoolManager.SwapParams({
+                zeroForOne: true, amountSpecified: -1e15, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
@@ -936,9 +942,8 @@ contract V205UnichainTest is Test, StrategyLib {
     }
 
     function test_V205_templateFillsOnUnichain() public {
-        StrategyTemplate.Params memory p = StrategyTemplate.Params({
-            feeE9: FEE_0_30_PCT, bandBps: 200, driftTicks: 300, exclusive: true, salt: 0
-        });
+        StrategyTemplate.Params memory p =
+            StrategyTemplate.Params({feeE9: FEE_0_30_PCT, bandBps: 200, driftTicks: 300, exclusive: true, salt: 0});
         ISwapVM.Order memory order =
             StrategyTemplate.order(maker, StrategyTemplate.program(p, manager, key, address(hook.bandGuard())));
 
