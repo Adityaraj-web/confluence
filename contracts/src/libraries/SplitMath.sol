@@ -192,7 +192,7 @@ library SplitMath {
         uint256 last = pool.length - 1;
         uint256 prefix = 0;
         uint256 remaining = amount;
-        for (uint256 k; k < MAX_SEGMENTS && k <= last; k++) {
+        for (uint256 k = 0; k < MAX_SEGMENTS && k <= last; k++) {
             Venue memory s = pool[k];
             v[0] = Venue(s.x, s.y, s.feeE9, k == last ? s.cap : type(uint256).max); // a copy: the caller's is untouched
             uint256[] memory r = _solve(v, remaining, exactIn);

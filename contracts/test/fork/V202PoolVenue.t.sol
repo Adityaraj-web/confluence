@@ -78,7 +78,9 @@ contract V202PoolVenueTest is PoolBase, SplitHelpers {
         PoolKey memory k = _overlapPool();
         PoolVenue.Pool memory p = _read(k, true, _lim(true));
         assertGe(p.segments.length, 5, "segments");
-        assertEq(p.segments[0].sqrtPriceStartX96, uint160(FixedPoint96.Q96), "starts at the price (tick 0 edge skipped)");
+        assertEq(
+            p.segments[0].sqrtPriceStartX96, uint160(FixedPoint96.Q96), "starts at the price (tick 0 edge skipped)"
+        );
         _assertEnds(p, 0, -60);
         _assertEnds(p, 1, -180);
         _assertEnds(p, 2, -300);
@@ -128,9 +130,11 @@ contract V202PoolVenueTest is PoolBase, SplitHelpers {
         for (uint256 i; i < 8; i++) {
             walked += p.segments[i].capIn;
         }
-        uint256 ninth = PoolVenue.segment(
+        uint256 ninth =
+            PoolVenue.segment(
             TickMath.getSqrtPriceAtTick(-480), TickMath.getSqrtPriceAtTick(-540), 2e21, p.swapFee, true
-        ).capIn;
+        )
+        .capIn;
         SplitMath.Venue[] memory makers = new SplitMath.Venue[](1);
         makers[0] = SplitMath.Venue(1e22, 1e22, 3_000_000, ninth / 4);
         uint256 amount = walked + ninth / 2;
@@ -177,6 +181,15 @@ contract V202PoolVenueTest is PoolBase, SplitHelpers {
         _assertEnds(p, 0, 276420);
         assertEq(p.segments[1].liquidity, p.segments[0].liquidity, "same liquidity across the word edge");
         assertEq(p.segments[1].sqrtPriceStartX96, p.segments[0].sqrtPriceEndX96, "contiguous");
+        // After the edge the search reads the next word (compressed + 1): segment 1 ends at the position's upper tick,
+        // and a trade past the whole range is quoted exactly (mutation M1, D-30).
+        _assertEnds(p, 1, tickUpper);
+        assertEq(p.segments.length, 2, "nothing past the upper tick");
+        (uint256 qPast, uint256 usedPast,) = PoolVenue.quoteExactIn(p, 3_000e18);
+        Real memory past = _realise(key, zfo, -int256(3_000e18), _lim(zfo));
+        assertLt(past.amountIn, 3_000e18, "3,000 MUMB is past the range");
+        assertEq(usedPast, past.amountIn, "past the range: input used = chain");
+        assertEq(qPast, past.amountOut, "past the range: quote = chain");
 
         for (uint256 i = 2; i < 4; i++) {
             Vectors.V1Case memory c = Vectors.v1Case(json, i);
@@ -667,9 +680,8 @@ contract V202PiecewiseTest is Test, SplitHelpers {
                 if (_word(seed, j, 31) % 2 == 0) makers[j].cap = _logUniform(_word(seed, j, 32), 1, amount);
             }
 
-            (uint256[] memory a, uint256 crossed) = exactIn
-                ? SplitMath.solveExactIn(pool, makers, amount)
-                : SplitMath.solveExactOut(pool, makers, amount);
+            (uint256[] memory a, uint256 crossed) =
+                exactIn ? SplitMath.solveExactIn(pool, makers, amount) : SplitMath.solveExactOut(pool, makers, amount);
             assertEq(a.length, makers.length + 1, "length");
             assertEq(_sum(a), amount, "sum");
             for (uint256 j; j < makers.length; j++) {
@@ -703,9 +715,8 @@ contract V202PiecewiseTest is Test, SplitHelpers {
         }
         uint256 amount = _edgy(amountSeed);
         for (uint256 mode; mode < 2; mode++) {
-            (uint256[] memory a, uint256 crossed) = mode == 0
-                ? SplitMath.solveExactIn(pool, makers, amount)
-                : SplitMath.solveExactOut(pool, makers, amount);
+            (uint256[] memory a, uint256 crossed) =
+                mode == 0 ? SplitMath.solveExactIn(pool, makers, amount) : SplitMath.solveExactOut(pool, makers, amount);
             assertEq(a.length, makers.length + 1, "length");
             assertEq(_sum(a), amount, "sum");
             assertLe(crossed, pool.length, "crossed");

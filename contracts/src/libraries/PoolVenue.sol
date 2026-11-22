@@ -115,7 +115,7 @@ library PoolVenue {
             count: 0
         });
         Segment[] memory buf = new Segment[](MAX_TICK_RANGES);
-        for (uint256 step; step < MAX_TICK_STEPS && w.count < MAX_TICK_RANGES && w.sqrtP != w.limit; step++) {
+        for (uint256 step = 0; step < MAX_TICK_STEPS && w.count < MAX_TICK_RANGES && w.sqrtP != w.limit; step++) {
             _step(w, buf);
         }
         p.truncated = w.sqrtP != w.limit && w.liq > 0;
@@ -189,7 +189,7 @@ library PoolVenue {
         uint256 n = p.segments.length;
         v = new SplitMath.Venue[](n);
         uint32 feeE9 = uint32(p.swapFee) * PIPS_TO_E9;
-        for (uint256 i; i < n && i < MAX_TICK_RANGES; i++) {
+        for (uint256 i = 0; i < n && i < MAX_TICK_RANGES; i++) {
             Segment memory s = p.segments[i];
             v[i] = SplitMath.Venue(s.x, s.y, feeE9, exactIn ? s.capIn : s.capOut);
         }
@@ -207,7 +207,7 @@ library PoolVenue {
         returns (uint256 amountOut, uint256 amountInUsed, uint256 touched)
     {
         uint256 remaining = _clamp(amountIn);
-        for (uint256 i; i < p.segments.length && i < MAX_TICK_RANGES && remaining > 0; i++) {
+        for (uint256 i = 0; i < p.segments.length && i < MAX_TICK_RANGES && remaining > 0; i++) {
             Segment memory s = p.segments[i];
             touched++;
             if (remaining >= s.capIn) {
@@ -215,9 +215,11 @@ library PoolVenue {
                 amountInUsed += s.capIn;
                 remaining -= s.capIn;
             } else {
-                (, uint256 stepIn, uint256 stepOut, uint256 feeAmount) = SwapMath.computeSwapStep(
-                    s.sqrtPriceStartX96, s.sqrtPriceEndX96, s.liquidity, -int256(remaining), p.swapFee
-                );
+                // casting to 'int256' is safe because `_clamp` keeps `remaining` <= type(int256).max
+                // forge-lint: disable-next-line(unsafe-typecast)
+                int256 specified = -int256(remaining);
+                (, uint256 stepIn, uint256 stepOut, uint256 feeAmount) =
+                    SwapMath.computeSwapStep(s.sqrtPriceStartX96, s.sqrtPriceEndX96, s.liquidity, specified, p.swapFee);
                 amountOut += stepOut;
                 amountInUsed += stepIn + feeAmount; // = remaining: the step ends inside the segment
                 remaining = 0;
@@ -235,7 +237,7 @@ library PoolVenue {
         returns (uint256 amountIn, uint256 amountOutGiven, uint256 touched)
     {
         uint256 remaining = _clamp(amountOut);
-        for (uint256 i; i < p.segments.length && i < MAX_TICK_RANGES && remaining > 0; i++) {
+        for (uint256 i = 0; i < p.segments.length && i < MAX_TICK_RANGES && remaining > 0; i++) {
             Segment memory s = p.segments[i];
             touched++;
             if (remaining >= s.capOut) {
@@ -243,9 +245,11 @@ library PoolVenue {
                 amountOutGiven += s.capOut;
                 remaining -= s.capOut;
             } else {
-                (, uint256 stepIn, uint256 stepOut, uint256 feeAmount) = SwapMath.computeSwapStep(
-                    s.sqrtPriceStartX96, s.sqrtPriceEndX96, s.liquidity, int256(remaining), p.swapFee
-                );
+                // casting to 'int256' is safe because `_clamp` keeps `remaining` <= type(int256).max
+                // forge-lint: disable-next-line(unsafe-typecast)
+                int256 specified = int256(remaining);
+                (, uint256 stepIn, uint256 stepOut, uint256 feeAmount) =
+                    SwapMath.computeSwapStep(s.sqrtPriceStartX96, s.sqrtPriceEndX96, s.liquidity, specified, p.swapFee);
                 amountIn += stepIn + feeAmount;
                 amountOutGiven += stepOut;
                 remaining = 0;
@@ -318,6 +322,9 @@ library PoolVenue {
 
     /// @dev Amounts are passed to v4 as int256; anything larger is clamped (no pool holds 2^255 of a token).
     function _clamp(uint256 amount) private pure returns (uint256) {
-        return amount > uint256(type(int256).max) ? uint256(type(int256).max) : amount;
+        // casting to 'uint256' is safe because type(int256).max is positive
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint256 maxInt = uint256(type(int256).max);
+        return amount > maxInt ? maxInt : amount;
     }
 }
