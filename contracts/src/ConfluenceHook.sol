@@ -10,7 +10,9 @@ import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
+import {BandGuardV2} from "./BandGuardV2.sol";
 import {AnchorLib} from "./libraries/AnchorLib.sol";
+import {StrategyTemplate} from "./libraries/StrategyTemplate.sol";
 
 /// @title ConfluenceHook (v2)
 /// @notice A Uniswap v4 hook that keeps a block-start price anchor per pool: the `slot0` tick at the block's first
@@ -31,21 +33,82 @@ contract ConfluenceHook is IHooks {
     /// zeros for a pool that does not exist: a wrong pool key would otherwise pass a band check.
     error PoolNotInitialized();
 
+    /// @dev `register` was given a `key.hooks` that is not this hook.
+    error HooksMismatch(address hooks);
+    /// @dev `currency0` is not strictly below `currency1`.
+    error CurrenciesOutOfOrder();
+    /// @dev A native-currency pool: Aqua holds no native balances.
+    error NativeCurrencyUnsupported();
+    /// @dev A fee above `MAX_LP_FEE` that is not the dynamic-fee flag.
+    error InvalidPoolFee(uint24 fee);
+    /// @dev A tick spacing outside v4's [1, 32767].
+    error InvalidTickSpacing(int24 tickSpacing);
+    /// @dev The pool has never had a swap: no recorded snapshot to price depth with (D-33).
+    error AnchorNotInitialised();
+    /// @dev Aqua does not report this strategy as shipped by the maker for the canonical router with the pair.
+    error StrategyNotShipped(bytes32 strategyHash);
+    /// @dev The strategy was docked.
+    error StrategyDocked(bytes32 strategyHash);
+    /// @dev The strategy could not fill anything now: its real depth is zero.
+    error NoDepth();
+    /// @dev The registry is full and the newcomer's depth does not exceed the smallest slot's.
+    error DepthTooLow(uint256 depth, uint256 smallest);
+    /// @dev The maker has no slot in this pool.
+    error NotRegistered(address maker);
+    /// @dev The slot's strategy is shipped and has depth: nobody may evict it.
+    error NotEvictable(address maker);
+
+    /// @notice Why a slot was emptied by `evict` or by a newcomer.
+    enum EvictReason {
+        DISPLACED,
+        DOCKED,
+        NO_DEPTH
+    }
+
+    /// @notice One registered maker.
+    struct Slot {
+        address maker;
+        StrategyTemplate.Params params;
+        bytes32 strategyHash;
+    }
+
+    /// @notice A maker registered a strategy. `depth` is its real depth, in currency1 units at the snapshot price.
+    event MakerRegistered(
+        PoolId indexed poolId, address indexed maker, bytes32 strategyHash, StrategyTemplate.Params params, uint256 depth
+    );
+    /// @notice A maker removed its own slot, or replaced its strategy.
+    event MakerUnregistered(PoolId indexed poolId, address indexed maker, bytes32 strategyHash);
+    /// @notice A slot was emptied by someone other than its maker.
+    event MakerEvicted(PoolId indexed poolId, address indexed maker, bytes32 strategyHash, EvictReason reason);
+
     /// @notice The anchor of `poolId` was recorded: the first swap of a new block. `emaTickX` is tick x 2^16.
     event AnchorUpdated(PoolId indexed poolId, int24 snapTick, int56 emaTickX, uint40 timestamp);
 
     /// @notice The Uniswap v4 PoolManager this hook serves.
     IPoolManager public immutable poolManager;
+    /// @notice The guard every registered strategy ends with. Deployed by this hook's constructor.
+    BandGuardV2 public immutable bandGuard;
     /// @notice Half-life of the EMA, in seconds (V2-11 may change it with a DECISIONS entry).
     uint256 public constant EMA_HALF_LIFE = 60;
 
-    /// @dev One packed slot per pool (slot 0 of this contract is the mapping's base).
+    /// @notice Most strategies registered per pool (bounds every registry loop).
+    uint256 public constant MAX_STRATEGIES = 6;
+    /// @notice Aqua, the same address on Ethereum and Unichain (D-28).
+    address public constant AQUA = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
+    /// @notice The canonical AquaSwapVMRouter v1.0.2, the same address on Ethereum and Unichain (D-28).
+    address public constant ROUTER = 0x111111338c5091E8440b67B168bAe16a668AC0De;
+
+    /// @dev One packed slot per pool (slot 0 of this contract is the mapping's base). Keep it first: V2-03's tests
+    /// read it with `vm.load`.
     mapping(PoolId => AnchorLib.Anchor) internal _anchors;
+    /// @dev At most `MAX_STRATEGIES` entries per pool.
+    mapping(PoolId => Slot[]) internal _slots;
 
     /// @param _poolManager The v4 PoolManager.
     /// @dev Reverts unless the deployed address carries exactly the flags in `getHookPermissions`.
     constructor(IPoolManager _poolManager) {
         poolManager = _poolManager;
+        bandGuard = new BandGuardV2();
         Hooks.validateHookPermissions(IHooks(address(this)), getHookPermissions());
     }
 
@@ -74,6 +137,31 @@ contract ConfluenceHook is IHooks {
         AnchorLib.Anchor memory a;
         (a, fresh) = _anchorNow(poolId);
         return (a.snapTick, a.emaTickX, fresh);
+    }
+
+    /// @notice STUB (red phase).
+    function register(PoolKey calldata, StrategyTemplate.Params calldata) external pure {
+        revert HookNotImplemented();
+    }
+
+    /// @notice STUB (red phase).
+    function unregister(PoolKey calldata) external pure {
+        revert HookNotImplemented();
+    }
+
+    /// @notice STUB (red phase).
+    function evict(PoolKey calldata, address) external pure {
+        revert HookNotImplemented();
+    }
+
+    /// @notice STUB (red phase).
+    function depthOf(PoolKey calldata, address) external pure returns (uint256) {
+        revert HookNotImplemented();
+    }
+
+    /// @notice The registered strategies of a pool, in slot order. Anyone may call.
+    function strategiesOf(PoolId poolId) external view returns (Slot[] memory) {
+        return _slots[poolId];
     }
 
     /// @notice Called by the PoolManager before a swap. Records the anchor on the first swap of a block, then returns
