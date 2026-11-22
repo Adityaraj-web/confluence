@@ -15,8 +15,8 @@ The maker's own guard, checked against the hook's anchor instead of spot, with a
 
 ## Behaviour
 - Same contract rules as `PoolPriceBandExtruction`: stateless, non-upgradeable, no owner, no storage, one `view` `extruction` serving quote and swap, never writes swap amounts, reverts or returns registers unchanged.
-- Args = v1's 88 bytes + `uint16 driftBps` + `uint8 flags` (bit 0 = exclusive) = 91 bytes. `build(...)` and `parse(...)` helpers in a library the template uses.
-- Check order: args length and ranges; tokens match the pool key; if exclusive, `query.taker == address(key.hooks)` else revert `TakerNotHook`; read `IConfluenceHook(key.hooks).anchorOf(poolId)`; `|snap − ema| <= driftBps` else `AnchorDrift`; registers computed (not zero); execution price within `bandBps` of the snapshot price else `BandExceeded(exec, ref, bandBps)`.
+- Args = v1's 88 bytes + `uint16 driftTicks` + `uint8 flags` (bit 0 = exclusive) = 91 bytes. `build(...)` and `parse(...)` helpers in a library the template uses.
+- Check order: args length and ranges; tokens match the pool key; if exclusive, `query.taker == address(key.hooks)` else revert `TakerNotHook`; read `IConfluenceHook(key.hooks).anchorOf(poolId)`; `|snap − ema| <= driftTicks` else `AnchorDrift`; registers computed (not zero); execution price within `bandBps` of the snapshot price else `BandExceeded(exec, ref, bandBps)`.
 - Tick-to-price via `TickMath.getSqrtPriceAtTick` and `FullMath`; no overflow near the tick bounds.
 - `PoolPriceBandExtruction` stays in the repo untouched for v1 tests.
 

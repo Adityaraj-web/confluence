@@ -59,12 +59,21 @@ contract ConfluenceHook is IHooks {
     /// it was stored this block. Anyone may call.
     /// @dev In a block before the first swap, both values are computed from the current `slot0` without writing, and
     /// equal what that swap stores (`fresh` is false). Reverts `PoolNotInitialized` for a pool with no price.
-    /// V2-04's drift check must compare `snap * 2^16` with the stored `emaTickX` in fixed point, not these ticks.
+    /// For the drift check use `anchorOfX`, which does not round.
     function anchorOf(PoolId poolId) external view returns (int24 snapTick, int24 emaTick, bool fresh) {
-        AnchorLib.Anchor memory a = _anchors[poolId];
-        if (a.lastBlock >= block.number) return (a.snapTick, AnchorLib.emaTick(a.emaTickX), true);
-        a = AnchorLib.next(a, _currentTick(poolId), block.timestamp, block.number, EMA_HALF_LIFE);
-        return (a.snapTick, AnchorLib.emaTick(a.emaTickX), false);
+        AnchorLib.Anchor memory a;
+        (a, fresh) = _anchorNow(poolId);
+        return (a.snapTick, AnchorLib.emaTick(a.emaTickX), fresh);
+    }
+
+    /// @notice The same anchor as `anchorOf`, with the EMA unrounded: `emaTickX` is the tick times 2^16, exactly as
+    /// stored. BandGuardV2's drift check compares it with `snapTick * 2^16`, so rounding never decides a refusal
+    /// (D-31, D-32). Anyone may call.
+    /// @dev Computed by the same lazy path as `anchorOf`; reverts `PoolNotInitialized` for a pool with no price.
+    function anchorOfX(PoolId poolId) external view returns (int24 snapTick, int56 emaTickX, bool fresh) {
+        AnchorLib.Anchor memory a;
+        (a, fresh) = _anchorNow(poolId);
+        return (a.snapTick, a.emaTickX, fresh);
     }
 
     /// @notice Called by the PoolManager before a swap. Records the anchor on the first swap of a block, then returns
@@ -83,6 +92,14 @@ contract ConfluenceHook is IHooks {
             emit AnchorUpdated(id, a.snapTick, a.emaTickX, a.lastTimestamp);
         }
         return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+
+    /// @dev What the block's first swap stores, or what is stored if a swap already ran this block.
+    function _anchorNow(PoolId poolId) private view returns (AnchorLib.Anchor memory a, bool fresh) {
+        a = _anchors[poolId];
+        if (a.lastBlock >= block.number) return (a, true);
+        a = AnchorLib.next(a, _currentTick(poolId), block.timestamp, block.number, EMA_HALF_LIFE);
+        return (a, false);
     }
 
     function _currentTick(PoolId id) private view returns (int24 tick) {
