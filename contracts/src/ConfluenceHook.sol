@@ -4,6 +4,12 @@ pragma solidity 0.8.30;
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IAqua} from "@1inch/aqua/src/interfaces/IAqua.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
@@ -98,6 +104,10 @@ contract ConfluenceHook is IHooks {
     /// @notice The canonical AquaSwapVMRouter v1.0.2, the same address on Ethereum and Unichain (D-28).
     address public constant ROUTER = 0x111111338c5091E8440b67B168bAe16a668AC0De;
 
+    /// @dev Aqua's marker for a docked strategy, and the token count of a template strategy.
+    uint8 private constant _DOCKED = 0xff;
+    uint8 private constant _TOKENS = 2;
+
     /// @dev One packed slot per pool (slot 0 of this contract is the mapping's base). Keep it first: V2-03's tests
     /// read it with `vm.load`.
     mapping(PoolId => AnchorLib.Anchor) internal _anchors;
@@ -139,24 +149,90 @@ contract ConfluenceHook is IHooks {
         return (a.snapTick, a.emaTickX, fresh);
     }
 
-    /// @notice STUB (red phase).
-    function register(PoolKey calldata, StrategyTemplate.Params calldata) external pure {
-        revert HookNotImplemented();
+    /// @notice Register the caller's strategy on this hook's pool. The hook rebuilds the template-T1 order for the
+    /// caller from `p` and `key`, and Aqua must report it shipped by the caller for the canonical router, with exactly
+    /// the pool's two tokens and not docked. One strategy per maker per pool: calling again replaces the caller's
+    /// slot. When all `MAX_STRATEGIES` slots are taken, the newcomer's real depth must be strictly greater than the
+    /// smallest slot's, and that slot is evicted. Anyone may call; `msg.sender` is the maker.
+    /// @dev Needs the pool's anchor (a swap has happened): depth is priced at the recorded snapshot, never at spot
+    /// (D-33). Check order: key, pool exists, anchor, template and Aqua, depth.
+    function register(PoolKey calldata key, StrategyTemplate.Params calldata p) external {
+        PoolId id = _checkKey(key);
+        int24 snap = _snapshotTick(id);
+        address c0 = Currency.unwrap(key.currency0);
+        address c1 = Currency.unwrap(key.currency1);
+
+        bytes32 h = StrategyTemplate.strategyHash(
+            StrategyTemplate.order(msg.sender, StrategyTemplate.program(p, poolManager, key, address(bandGuard)))
+        );
+        (, uint8 n0) = IAqua(AQUA).rawBalances(msg.sender, ROUTER, h, c0);
+        (, uint8 n1) = IAqua(AQUA).rawBalances(msg.sender, ROUTER, h, c1);
+        if (n0 == _DOCKED && n1 == _DOCKED) revert StrategyDocked(h);
+        if (n0 != _TOKENS || n1 != _TOKENS) revert StrategyNotShipped(h);
+
+        (uint256 depth,) = _state(c0, c1, msg.sender, h, snap);
+        if (depth == 0) revert NoDepth();
+
+        Slot[] storage slots = _slots[id];
+        Slot memory slot = Slot({maker: msg.sender, params: p, strategyHash: h});
+        (bool own, uint256 at) = _find(slots, msg.sender);
+        if (own) {
+            emit MakerUnregistered(id, msg.sender, slots[at].strategyHash);
+            slots[at] = slot;
+        } else if (slots.length < MAX_STRATEGIES) {
+            slots.push(slot);
+        } else {
+            (uint256 idx, uint256 smallest, EvictReason reason) = _smallest(slots, c0, c1, snap);
+            if (depth <= smallest) revert DepthTooLow(depth, smallest);
+            emit MakerEvicted(id, slots[idx].maker, slots[idx].strategyHash, reason);
+            slots[idx] = slot;
+        }
+        emit MakerRegistered(id, msg.sender, h, p, depth);
     }
 
-    /// @notice STUB (red phase).
-    function unregister(PoolKey calldata) external pure {
-        revert HookNotImplemented();
+    /// @notice Remove the caller's own slot. Only the maker can; nobody else's call changes it.
+    /// @dev Reverts `NotRegistered` when the caller has no slot in the pool named by `key`.
+    function unregister(PoolKey calldata key) external {
+        PoolId id = key.toId();
+        Slot[] storage slots = _slots[id];
+        (bool found, uint256 at) = _find(slots, msg.sender);
+        if (!found) revert NotRegistered(msg.sender);
+        bytes32 h = slots[at].strategyHash;
+        _remove(slots, at);
+        emit MakerUnregistered(id, msg.sender, h);
     }
 
-    /// @notice STUB (red phase).
-    function evict(PoolKey calldata, address) external pure {
-        revert HookNotImplemented();
+    /// @notice Remove `maker`'s slot when its strategy is docked or its real depth is zero. Anyone may call; it
+    /// reverts `NotEvictable` for a strategy that is shipped and has depth, and `NotRegistered` for an unknown maker.
+    function evict(PoolKey calldata key, address maker) external {
+        PoolId id = key.toId();
+        Slot[] storage slots = _slots[id];
+        (bool found, uint256 at) = _find(slots, maker);
+        if (!found) revert NotRegistered(maker);
+        bytes32 h = slots[at].strategyHash;
+        (uint256 depth, bool docked) =
+            _state(Currency.unwrap(key.currency0), Currency.unwrap(key.currency1), maker, h, _snapshotTick(id));
+        EvictReason reason;
+        if (docked) reason = EvictReason.DOCKED;
+        else if (depth == 0) reason = EvictReason.NO_DEPTH;
+        else revert NotEvictable(maker);
+        _remove(slots, at);
+        emit MakerEvicted(id, maker, h, reason);
     }
 
-    /// @notice STUB (red phase).
-    function depthOf(PoolKey calldata, address) external pure returns (uint256) {
-        revert HookNotImplemented();
+    /// @notice The real depth of `maker`'s registered strategy now, in currency1 units at the snapshot price:
+    /// per token min(Aqua virtual balance, wallet balance, allowance to Aqua), then `d0 * price + d1`. It ranks slots
+    /// within this pool only; a wallet backing strategies in several pools counts fully in each (D-33). Anyone may
+    /// call. Reverts `AnchorNotInitialised` before the pool's first swap, and `NotRegistered` for an unknown maker.
+    function depthOf(PoolKey calldata key, address maker) external view returns (uint256 depth) {
+        PoolId id = key.toId();
+        int24 snap = _snapshotTick(id);
+        Slot[] storage slots = _slots[id];
+        (bool found, uint256 at) = _find(slots, maker);
+        if (!found) revert NotRegistered(maker);
+        (depth,) = _state(
+            Currency.unwrap(key.currency0), Currency.unwrap(key.currency1), maker, slots[at].strategyHash, snap
+        );
     }
 
     /// @notice The registered strategies of a pool, in slot order. Anyone may call.
@@ -180,6 +256,79 @@ contract ConfluenceHook is IHooks {
             emit AnchorUpdated(id, a.snapTick, a.emaTickX, a.lastTimestamp);
         }
         return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+
+    /// @dev Static key checks, then that the pool exists. Returns the pool id.
+    function _checkKey(PoolKey calldata key) private view returns (PoolId id) {
+        if (address(key.hooks) != address(this)) revert HooksMismatch(address(key.hooks));
+        address c0 = Currency.unwrap(key.currency0);
+        if (c0 == address(0)) revert NativeCurrencyUnsupported();
+        if (c0 >= Currency.unwrap(key.currency1)) revert CurrenciesOutOfOrder();
+        if (key.fee > LPFeeLibrary.MAX_LP_FEE && key.fee != LPFeeLibrary.DYNAMIC_FEE_FLAG) {
+            revert InvalidPoolFee(key.fee);
+        }
+        if (key.tickSpacing < TickMath.MIN_TICK_SPACING || key.tickSpacing > TickMath.MAX_TICK_SPACING) {
+            revert InvalidTickSpacing(key.tickSpacing);
+        }
+        id = key.toId();
+        _currentTick(id); // reverts PoolNotInitialized
+    }
+
+    /// @dev The recorded snapshot tick: the `slot0` tick at the start of the last block with a swap. Never spot, and
+    /// never the lazy "now" value `anchorOf` returns before the block's first swap (D-33).
+    function _snapshotTick(PoolId id) private view returns (int24) {
+        AnchorLib.Anchor memory a = _anchors[id];
+        if (a.lastBlock == 0) revert AnchorNotInitialised();
+        return a.snapTick;
+    }
+
+    /// @dev Real depth of a strategy and whether it is docked (both tokens report 0xff). A strategy that does not
+    /// report the two-token count has depth zero.
+    function _state(address c0, address c1, address maker, bytes32 h, int24 snap)
+        private
+        view
+        returns (uint256 depth, bool docked)
+    {
+        (uint256 v0, uint8 n0) = IAqua(AQUA).rawBalances(maker, ROUTER, h, c0);
+        (uint256 v1, uint8 n1) = IAqua(AQUA).rawBalances(maker, ROUTER, h, c1);
+        if (n0 == _DOCKED && n1 == _DOCKED) return (0, true);
+        if (n0 != _TOKENS || n1 != _TOKENS) return (0, false);
+        depth = StrategyTemplate.depthValue(_real(c0, maker, v0), _real(c1, maker, v1), snap);
+    }
+
+    /// @dev What Aqua can pull of one token: the virtual balance, capped by the wallet and by the allowance to Aqua.
+    function _real(address token, address maker, uint256 virtualBalance) private view returns (uint256) {
+        return Math.min(virtualBalance, Math.min(IERC20(token).balanceOf(maker), IERC20(token).allowance(maker, AQUA)));
+    }
+
+    /// @dev The slot with the smallest live depth (the lowest index on a tie) and why it can go.
+    function _smallest(Slot[] storage slots, address c0, address c1, int24 snap)
+        private
+        view
+        returns (uint256 idx, uint256 smallest, EvictReason reason)
+    {
+        uint256 n = Math.min(slots.length, MAX_STRATEGIES);
+        smallest = type(uint256).max;
+        bool docked;
+        for (uint256 i; i < n; i++) {
+            (uint256 d, bool dk) = _state(c0, c1, slots[i].maker, slots[i].strategyHash, snap);
+            if (d < smallest) (idx, smallest, docked) = (i, d, dk);
+        }
+        reason = docked ? EvictReason.DOCKED : (smallest == 0 ? EvictReason.NO_DEPTH : EvictReason.DISPLACED);
+    }
+
+    function _find(Slot[] storage slots, address maker) private view returns (bool found, uint256 at) {
+        uint256 n = Math.min(slots.length, MAX_STRATEGIES);
+        for (uint256 i; i < n; i++) {
+            if (slots[i].maker == maker) return (true, i);
+        }
+    }
+
+    /// @dev Swap-and-pop; slot order is not meaningful.
+    function _remove(Slot[] storage slots, uint256 at) private {
+        uint256 last = slots.length - 1;
+        if (at != last) slots[at] = slots[last];
+        slots.pop();
     }
 
     /// @dev What the block's first swap stores, or what is stored if a swap already ran this block.
