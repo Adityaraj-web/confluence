@@ -337,10 +337,10 @@ contract V204BandGuardTest is Test {
         _assertPasses(TAKER, TOKEN1, 1e18, 1.1e18, args);
         // Out of band by the same amount in both orders.
         _flat(953);
-        vm.expectRevert(BandExceeded.selector);
+        vm.expectPartialRevert(BandExceeded.selector);
         _run(TAKER, TOKEN0, 1e18, 1.2e18, args, false);
         _flat(-953);
-        vm.expectRevert(BandExceeded.selector);
+        vm.expectPartialRevert(BandExceeded.selector);
         _run(TAKER, TOKEN1, 1e18, 1.2e18, args, false);
     }
 

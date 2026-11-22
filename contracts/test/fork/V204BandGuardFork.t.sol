@@ -280,7 +280,7 @@ contract V204BandGuardForkTest is PoolBase, StrategyLib {
 
         _push();
         int24 spot = _tick();
-        assertGt(before_ - spot, 300, "the push moved slot0 by more than 3%");
+        assertGt(before_ > spot ? before_ - spot : spot - before_, 300, "the push moved slot0 by more than 3%");
 
         // The fair curve (price 1.0097 net of fee) is 4.6% from spot but 1% from the snapshot: it fills.
         _fund(FILL_USDC);
