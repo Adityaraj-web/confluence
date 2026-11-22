@@ -77,7 +77,7 @@ Swaps inside one block share a timestamp, so throughout Δt the price sat at the
 
 BandGuardV2 passes a fill only if:
 - execution price within `bandBps` of the snapshot price, and
-- |snap − ema| within `driftBps`.
+- |snap − ema| within `driftTicks`.
 
 ## 5. Parameters (proposed; V2-11 measures and fixes each with a DECISIONS entry)
 
@@ -90,7 +90,7 @@ BandGuardV2 passes a fill only if:
 | `MIN_LEG_BPS` | 50 (0.5%) | hook constant | dust legs cost more gas than they save |
 | `EMA_HALF_LIFE` | 60 s | hook constant | manipulation cost vs lag |
 | `bandBps` | default 200 | maker, strategy bytes | as v1 |
-| `driftBps` | default 300 | maker, strategy bytes | largest snap–EMA gap the maker accepts |
+| `driftTicks` | default 300 | maker, strategy bytes | largest snap–EMA gap the maker accepts |
 | `exclusive` | default true | maker, strategy bytes | only the hook may take |
 | `GAS_RESERVE`, `LEG_GAS_CAP` | 150,000 / 640,000 | hook constants | from v1 D-20, re-measured |
 

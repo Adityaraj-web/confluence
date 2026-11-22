@@ -16,7 +16,7 @@ Show each known attack failing on v2, with the attacker's measured profit or los
 ## Behaviour
 One test file per scenario; each reports attacker PnL and maker PnL.
 1. Same-block guard sandwich: flash-push the pool to a stale maker price, fill the maker, swap back. v1: succeeds. v2: refused.
-2. Cross-block push of the previous block's close: bounded by `driftBps`; report max maker loss and attacker cost.
+2. Cross-block push of the previous block's close: bounded by `driftTicks`; report max maker loss and attacker cost.
 3. Stale maker after a real market move: dropped as off-market.
 4. Phantom and underfunded makers: capped before allocation, no revert.
 5. Gas-burning strategy: bounded by `LEG_GAS_CAP`; evictable.

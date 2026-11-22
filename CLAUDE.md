@@ -53,7 +53,7 @@ v2 is a solo continuation by Adityaraj. **Current work: Phase 1 (protocol), spec
 - **EMA**: time-weighted average of snapshots in tick space, half-life `EMA_HALF_LIFE`.
 - **Anchor**: (snapshot, EMA), read with `anchorOf(poolId)`.
 - **Band**: a fill's execution price must be within `bandBps` of the snapshot price.
-- **Drift**: `|snapshot − EMA|`; above the maker's `driftBps` the maker pauses.
+- **Drift**: `|snapshot − EMA|`; above the maker's `driftTicks` the maker pauses.
 - **Exclusive**: strategy flag; only the hook may be the taker.
 - **Cap**: the most a venue can fill now (band, wallet, allowance, PoolManager balance).
 - **Canonical router**: 1inch's deployed `AquaSwapVMRouter` v1.0.2. Never forked, modified or redeployed.
