@@ -258,12 +258,19 @@ contract V202PoolVenueTest is PoolBase, SplitHelpers {
     }
 
     /// @dev D-29 carry-over, on the fork: an exact output the pool's walked ranges cannot give, with a capped maker.
-    ///      No revert; the pool is past every walked range (`crossed == length`), and its quote cannot fill its share:
-    ///      the V2-07 hook must not rely on the prediction there (PROGRESS carry-over).
+    ///      A hard end exists only at the trader's limit (D-30): here the limit sits at the end of the liquidity
+    ///      (tick -180). No revert; the pool is past every walked range (`crossed == length`), and its quote cannot fill
+    ///      its share: the V2-07 hook must not rely on the prediction there (PROGRESS carry-over (a)). Without that
+    ///      limit the walk cannot tell the end of the liquidity from a gap, so it is truncated and the pool takes the
+    ///      rest.
     function test_V202_noNextRangeOnFork() public {
         PoolKey memory k = _crossingPool();
-        PoolVenue.Pool memory p = _read(k, true, _lim(true));
-        assertFalse(p.truncated, "the walk saw the end of the liquidity: hard cap");
+        PoolVenue.Pool memory open = _read(k, true, _lim(true));
+        assertTrue(open.truncated, "far limit: the end of the liquidity looks like a gap, so truncated");
+        assertEq(PoolVenue.venues(open, false)[open.segments.length - 1].cap, NONE, "far limit: last venue uncapped");
+
+        PoolVenue.Pool memory p = _read(k, true, TickMath.getSqrtPriceAtTick(-180));
+        assertFalse(p.truncated, "limit at the end: hard cap");
         assertEq(p.segments.length, 3, "three ranges");
         SplitMath.Venue[] memory makers = new SplitMath.Venue[](1);
         makers[0] = SplitMath.Venue(2e22, 2e22, 3_000_000, 1e20);
@@ -274,6 +281,41 @@ contract V202PoolVenueTest is PoolBase, SplitHelpers {
         assertEq(crossed, 3, "past every walked range");
         (, uint256 given,) = PoolVenue.quoteExactOut(p, b[0]);
         assertLt(given, b[0], "the pool cannot give its predicted share");
+    }
+
+    /// @dev Spec review (D-30): the walk stops at `MAX_TICK_RANGES` exactly where the liquidity drops to zero, with a
+    ///      one-spacing gap and deep liquidity after it. The walk cannot tell the gap from the end, so it is truncated
+    ///      and the pool takes the rest. A hard cap there would push the rest onto a thin maker, worse than pool-only.
+    ///      The split (real pool leg plus the maker's SwapVM output) is no worse than the real pool-only swap.
+    function test_V202_gapAfterWalkIsTruncated() public {
+        PoolKey memory k = _gapPool();
+        PoolVenue.Pool memory p = _read(k, true, _lim(true));
+        assertEq(p.segments.length, PoolVenue.MAX_TICK_RANGES, "8 segments");
+        _assertEnds(p, 7, -480);
+        assertTrue(p.truncated, "stopped at a bound before the limit: truncated");
+        SplitMath.Venue[] memory pv = PoolVenue.venues(p, true);
+        assertEq(pv[7].cap, NONE, "last venue uncapped");
+
+        uint256 walked;
+        for (uint256 i; i < 8; i++) {
+            walked += p.segments[i].capIn;
+        }
+        uint256 amount = walked + 1e20;
+        SplitMath.Venue[] memory makers = new SplitMath.Venue[](1);
+        makers[0] = SplitMath.Venue(5e20, 4.8e20, 3_000_000, NONE); // thin, priced near tick -408
+        (uint256[] memory a,) = SplitMath.solveExactIn(pv, makers, amount);
+        assertEq(a[0] + a[1], amount, "sum");
+        assertGt(a[0], walked, "the pool's share goes past the gap");
+
+        Real memory poolOnly = _realise(k, true, -int256(amount), _lim(true));
+        Real memory leg = _realise(k, true, -int256(a[0]), _lim(true));
+        assertEq(poolOnly.amountIn, amount, "pool-only fills the whole input");
+        assertEq(leg.amountIn, a[0], "the pool leg fills its share");
+        uint256 split = leg.amountOut + (a[1] > 0 ? _cpOutInt(makers[0], a[1]) : 0);
+        assertGe(split, poolOnly.amountOut, "the split is no worse than pool-only");
+        console2.log("gap: pool-only out", poolOnly.amountOut);
+        console2.log("gap: split out", split);
+        console2.log("gap: maker share", a[1]);
     }
 
     /// @dev Read-only: the walk writes nothing to the PoolManager.
@@ -484,6 +526,18 @@ contract V202PoolVenueTest is PoolBase, SplitHelpers {
         pos[0] = Pos(-600, 600, 1e22);
         pos[1] = Pos(-300, -60, 2e22);
         pos[2] = Pos(-480, -180, 3e22);
+        return _newPool(pos, POOL_FEE);
+    }
+
+    /// @dev Deep liquidity on [-480, 600], seven small positions making ticks at -60 ... -420, a gap on [-540, -480]
+    ///      and deep liquidity again on [-1200, -540]. Zero for one from tick 0, the 8th segment ends at -480.
+    function _gapPool() internal returns (PoolKey memory) {
+        Pos[] memory pos = new Pos[](9);
+        pos[0] = Pos(-480, 600, 1e22);
+        for (uint256 i; i < 7; i++) {
+            pos[i + 1] = Pos(-60 * int24(int256(i + 1)), 600, 1e20);
+        }
+        pos[8] = Pos(-1200, -540, 1e22);
         return _newPool(pos, POOL_FEE);
     }
 
