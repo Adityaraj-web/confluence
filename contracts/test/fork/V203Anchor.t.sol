@@ -73,11 +73,12 @@ contract V203AnchorMathTest is Test {
         if (hi - lo >= h && hi < 16 * h && fLo > 1) assertLt(fHi, fLo, "strictly decreasing");
     }
 
-    /// @dev Accuracy: f(a + b) = f(a) f(b) to 2^-30 relative (plus 2^-100 absolute for tiny values).
+    /// @dev Accuracy: f(a + b) = f(a) f(b) to 2^-30 relative (plus 2^-100 absolute for tiny values), below the
+    ///      cut-off. At 16H the factor drops from 2^-16 to 0: that jump is the documented cost of the cut-off (D-31).
     function testFuzz_V203_exp2Accuracy(uint256 a, uint256 b, bool useHook, uint256 hSeed) public pure {
         uint256 h = useHook ? H : bound(hSeed, 1, 1 << 32);
-        a = bound(a, 0, 8 * h);
-        b = bound(b, 0, 8 * h);
+        a = bound(a, 0, 8 * h - 1);
+        b = bound(b, 0, 8 * h - 1);
         uint256 fab = AnchorLib.decayX128(a + b, h);
         uint256 prod = Math.mulDiv(AnchorLib.decayX128(a, h), AnchorLib.decayX128(b, h), Q128);
         uint256 diff = fab > prod ? fab - prod : prod - fab;
@@ -244,9 +245,10 @@ contract V203AnchorTest is PoolBase {
     }
 
     function _encode(uint40 ts, uint64 blk, int24 snap, int56 emaX) internal pure returns (bytes32) {
-        return bytes32(
-            uint256(ts) | (uint256(blk) << 40) | (uint256(uint24(snap)) << 104) | (uint256(uint56(emaX)) << 128)
-        );
+        return
+            bytes32(
+                uint256(ts) | (uint256(blk) << 40) | (uint256(uint24(snap)) << 104) | (uint256(uint56(emaX)) << 128)
+            );
     }
 
     function _tick(PoolId id) internal view returns (int24 t) {
@@ -313,8 +315,7 @@ contract V203AnchorTest is PoolBase {
         Raw memory z = _raw(idV2);
         assertEq(abi.encode(z.ts, z.blk, z.snap, z.emaX, z.high), abi.encode(0, 0, 0, 0, 0), "untouched slot is zero");
 
-        uint256[10] memory dts =
-            [uint256(0), 1, 30, H, 7 * H, 16 * H - 1, 16 * H, 10 * 365 days, 1, 5];
+        uint256[10] memory dts = [uint256(0), 1, 30, H, 7 * H, 16 * H - 1, 16 * H, 10 * 365 days, 1, 5];
         for (uint256 i; i < dts.length; ++i) {
             if (i > 0) _next(dts[i]);
             (int24 s1, int24 e1, bool f1) = _anchor();
@@ -481,8 +482,9 @@ contract V203AnchorTest is PoolBase {
     }
 
     function _touch(PoolKey memory k) internal {
-        IPoolManager.SwapParams memory p =
-            IPoolManager.SwapParams({zeroForOne: true, amountSpecified: -1, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1});
+        IPoolManager.SwapParams memory p = IPoolManager.SwapParams({
+            zeroForOne: true, amountSpecified: -1, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
         vm.prank(POOL_MANAGER);
         hookV2.beforeSwap(address(this), k, p, "");
     }
@@ -553,8 +555,9 @@ contract V203AnchorTest is PoolBase {
         vm.expectRevert(ConfluenceHook.PoolNotInitialized.selector);
         hookV2.anchorOf(k.toId());
 
-        IPoolManager.SwapParams memory p =
-            IPoolManager.SwapParams({zeroForOne: true, amountSpecified: -1, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1});
+        IPoolManager.SwapParams memory p = IPoolManager.SwapParams({
+            zeroForOne: true, amountSpecified: -1, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
         vm.prank(POOL_MANAGER);
         vm.expectRevert(ConfluenceHook.PoolNotInitialized.selector);
         hookV2.beforeSwap(address(this), k, p, "");
