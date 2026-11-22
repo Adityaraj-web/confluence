@@ -313,26 +313,31 @@ contract V202PoolVenueTest is PoolBase, SplitHelpers {
         uint256 gasRead = g - gasleft();
         assertEq(p.segments.length, 8, "8 segments");
         SplitMath.Venue[] memory pv = PoolVenue.venues(p, true);
-        uint256 amount = p.segments[0].capIn + p.segments[1].capIn + p.segments[2].capIn;
-
+        uint256 amount;
+        for (uint256 i; i < 8; i++) {
+            amount += p.segments[i].capIn;
+        }
+        // Makers priced about 4% below the pool's start, so the pool's share crosses most of the 8 segments.
         SplitMath.Venue[] memory one = new SplitMath.Venue[](1);
-        one[0] = SplitMath.Venue(1e22, 1e22, 3_000_000, NONE);
+        one[0] = SplitMath.Venue(1e22, 0.96e22, 3_000_000, NONE);
         g = gasleft();
-        SplitMath.solveExactIn(pv, one, amount);
+        (, uint256 crossedOne) = SplitMath.solveExactIn(pv, one, amount);
         uint256 gasOne = g - gasleft();
 
         SplitMath.Venue[] memory three = new SplitMath.Venue[](3);
-        three[0] = SplitMath.Venue(1e22, 1e22, 3_000_000, NONE);
-        three[1] = SplitMath.Venue(8e21, 8.02e21, 500_000, NONE);
-        three[2] = SplitMath.Venue(5e21, 5.03e21, 1_000_000, NONE);
+        three[0] = SplitMath.Venue(1e22, 0.96e22, 3_000_000, NONE);
+        three[1] = SplitMath.Venue(8e21, 7.7e21, 500_000, NONE);
+        three[2] = SplitMath.Venue(5e21, 4.81e21, 1_000_000, NONE);
         g = gasleft();
-        (, uint256 crossed) = SplitMath.solveExactIn(pv, three, amount);
+        (, uint256 crossedThree) = SplitMath.solveExactIn(pv, three, amount);
         uint256 gasThree = g - gasleft();
+        assertGe(crossedOne, 5, "the measured solves cross several segments");
 
         console2.log("gas PoolVenue.read, 8 segments (9 steps)", gasRead);
         console2.log("gas piecewise exact in, 1 maker", gasOne);
+        console2.log("  segments crossed", crossedOne);
         console2.log("gas piecewise exact in, 3 makers", gasThree);
-        console2.log("  segments crossed (3 makers)", crossed);
+        console2.log("  segments crossed", crossedThree);
     }
 
     // =====================================================================================================
@@ -655,7 +660,9 @@ contract V202PiecewiseTest is Test, SplitHelpers {
                 if (pool[i].cap != NONE) capacity += pool[i].cap;
             }
             uint256 hi = exactIn ? 2 * capacity + 1 : capacity + _sumMakerY(makers) / 2 + 1;
-            uint256 amount = _logUniform(amountSeed, 1, hi > MAX_AMOUNT ? MAX_AMOUNT : hi);
+            if (hi > MAX_AMOUNT) hi = MAX_AMOUNT;
+            // Half the amounts anywhere from 1 wei, half within 64x of the bound, so many runs cross segments (D-30).
+            uint256 amount = _logUniform(amountSeed, amountSeed % 2 == 0 ? 1 : hi / 64, hi);
             for (uint256 j; j < makers.length; j++) {
                 if (_word(seed, j, 31) % 2 == 0) makers[j].cap = _logUniform(_word(seed, j, 32), 1, amount);
             }
