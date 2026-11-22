@@ -81,8 +81,9 @@ library SplitMath {
     /// @param makers Makers, each with its own cap.
     /// @return a `a[0]` is the pool's total input, `a[1 + j]` maker j's; the parts sum to `amountIn`.
     /// @return crossed Segments the pool's share fills completely: its share ends inside segment `crossed`.
-    ///         `crossed == pool.length` means it is asked for more than every walked segment holds, which happens
-    ///         only when the last cap is hard and the makers cannot take the rest.
+    ///         `crossed == pool.length` (only with a hard last cap) means the share reaches the end of every walked
+    ///         segment. It is exactly their total when the makers take the rest, and more than that only when the
+    ///         makers cannot: then the pool cannot fill its share (PROGRESS carry-over (a) for V2-07).
     function solveExactIn(Venue[] memory pool, Venue[] memory makers, uint256 amountIn)
         internal
         pure

@@ -660,6 +660,51 @@ contract V202PiecewiseTest is Test, SplitHelpers {
         assertEq(crossedIn, 1, "in: past the only range");
     }
 
+    /// @dev A share exactly at a segment's cap crosses (`>=`, mutation M10): the next segment, priced better here, then
+    ///      takes more. Synthetic segments, so the jump in price makes the difference visible.
+    function test_V202_shareAtCapCrosses() public pure {
+        uint32 fee = 3_000_000;
+        SplitMath.Venue memory maker = SplitMath.Venue(1e22, 1e22, fee, NONE);
+        for (uint256 mode; mode < 2; mode++) {
+            bool exactIn = mode == 0;
+            uint256 amount = 1e21;
+            SplitMath.Venue[] memory one = new SplitMath.Venue[](2);
+            one[0] = SplitMath.Venue(1e22, 1e22, fee, NONE);
+            one[1] = maker;
+            uint256 share = (exactIn ? SplitMath.solveExactIn(one, amount) : SplitMath.solveExactOut(one, amount))[0];
+
+            SplitMath.Venue[] memory pool = new SplitMath.Venue[](2);
+            pool[0] = SplitMath.Venue(1e22, 1e22, fee, share); // the free share lands exactly on the cap
+            pool[1] = SplitMath.Venue(1e22, 2e22, fee, NONE); // a better price after the cap
+            SplitMath.Venue[] memory makers = new SplitMath.Venue[](1);
+            makers[0] = maker;
+            (uint256[] memory a, uint256 crossed) =
+                exactIn ? SplitMath.solveExactIn(pool, makers, amount) : SplitMath.solveExactOut(pool, makers, amount);
+            assertEq(crossed, 1, "a share at the cap crosses");
+            assertGt(a[0], share, "the next segment takes more");
+            assertEq(a[0] + a[1], amount, "sum");
+        }
+    }
+
+    /// @dev A hard last cap with makers that have room (mutation M11): the pool stops exactly at its capacity and the
+    ///      maker takes the rest, both modes. `crossed == length` here, yet the pool's share is fillable: the V2-07
+    ///      carry-over (a) is only the case where the share is past the capacity.
+    function test_V202_hardLastCapPinsPool() public pure {
+        uint32 fee = 3_000_000;
+        SplitMath.Venue[] memory pool = new SplitMath.Venue[](2);
+        pool[0] = SplitMath.Venue(1e22, 1e22, fee, 5e19);
+        pool[1] = SplitMath.Venue(1.01e22, 0.99e22, fee, 5e19);
+        SplitMath.Venue[] memory makers = new SplitMath.Venue[](1);
+        makers[0] = SplitMath.Venue(1e22, 1e22, fee, NONE);
+        for (uint256 mode; mode < 2; mode++) {
+            (uint256[] memory a, uint256 crossed) =
+                mode == 0 ? SplitMath.solveExactIn(pool, makers, 1e21) : SplitMath.solveExactOut(pool, makers, 1e21);
+            assertEq(a[0], 1e20, "the pool stops at its hard end");
+            assertEq(a[1], 1e21 - 1e20, "the maker takes the rest");
+            assertEq(crossed, 2, "every walked segment is filled");
+        }
+    }
+
     /// @dev Random contiguous segment chains (built with `PoolVenue.segment`) and 0 to 7 makers, both modes: the
     ///      parts sum, makers keep their caps, and `crossed` names the segment the pool's share ends in.
     function testFuzz_V202_piecewiseSumsAndCaps(uint256 seed, uint256 amountSeed) public pure {
@@ -696,6 +741,11 @@ contract V202PiecewiseTest is Test, SplitHelpers {
             assertGe(a[0], prefix, "the pool fills every range it crosses");
             if (crossed < pool.length) {
                 assertLt(a[0] - prefix, pool[crossed].cap, "the pool ends inside the range `crossed`");
+            } else if (exactIn && a[0] > prefix + makers.length + 1) {
+                // Past a hard end (beyond index 0's rounding remainder) only when no maker has room (mutation M11).
+                for (uint256 j; j < makers.length; j++) {
+                    assertEq(a[j + 1], makers[j].cap, "the pool is past its hard end while a maker has room");
+                }
             }
         }
     }
