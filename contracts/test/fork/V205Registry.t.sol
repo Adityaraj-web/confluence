@@ -26,7 +26,7 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
-import {BandGuardArgs, InvalidBand, InvalidDrift} from "../../src/BandGuardV2.sol";
+import {BandGuardArgs, InvalidBand, InvalidDrift, TakerNotHook} from "../../src/BandGuardV2.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {StrategyTemplate} from "../../src/libraries/StrategyTemplate.sol";
 import {MockMUMB} from "../../src/mocks/MockMUMB.sol";
@@ -995,7 +995,7 @@ contract V205UnichainTest is Test, StrategyLib {
         t0.mint(stranger, SWAP_IN);
         vm.startPrank(stranger);
         t0.approve(ROUTER_ADDR, SWAP_IN);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(TakerNotHook.selector, stranger));
         ISwapVM(ROUTER_ADDR).swap(order, address(t0), address(t1), SWAP_IN, _takerDataFor(stranger));
         vm.stopPrank();
     }
