@@ -67,6 +67,9 @@ contract ConfluenceHook is IHooks {
         return (a.snapTick, AnchorLib.emaTick(a.emaTickX), false);
     }
 
+    /// @notice STUB (V2-04 step 1).
+    function anchorOfX(PoolId) external view returns (int24 snapTick, int56 emaTickX, bool fresh) {}
+
     /// @notice Called by the PoolManager before a swap. Records the anchor on the first swap of a block, then returns
     /// a zero delta and no LP-fee override: the pool fills the whole swap.
     /// @dev Only the PoolManager may call. `hookData` and the sender are ignored.
