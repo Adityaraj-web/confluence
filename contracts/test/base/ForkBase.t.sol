@@ -3,7 +3,11 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 import {MockMUMB} from "../../src/mocks/MockMUMB.sol";
+import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 
 /// @notice Shared fork setup. Every fork test extends this.
 abstract contract ForkBase is Test {
@@ -40,6 +44,16 @@ abstract contract ForkBase is Test {
 
         deal(USDC, priya, PRIYA_USDC);
         deal(USDC, trader, TRADER_USDC);
+    }
+
+    /// @notice Mines a CREATE2 salt for exactly beforeSwap + beforeSwapReturnDelta and deploys the v2 hook from this
+    /// contract. setUp does not call it: v1 tests keep their own hook (PoolBase) and pay nothing for v2.
+    function _deployHookV2() internal returns (ConfluenceHook h) {
+        uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG);
+        bytes memory args = abi.encode(IPoolManager(POOL_MANAGER));
+        (address expected, bytes32 salt) = HookMiner.find(address(this), flags, type(ConfluenceHook).creationCode, args);
+        h = new ConfluenceHook{salt: salt}(IPoolManager(POOL_MANAGER));
+        require(address(h) == expected, "ForkBase: v2 hook address mismatch");
     }
 
     /// @notice MUMB and USDC balances of `who`.
