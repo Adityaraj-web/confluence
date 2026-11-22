@@ -8,6 +8,7 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
+import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {BeforeSwapDelta} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
@@ -434,9 +435,7 @@ contract V203AnchorTest is PoolBase {
         hookV2.beforeSwap(address(this), keyV2, p, "");
         _next(1);
         vm.prank(POOL_MANAGER);
-        uint256 g = gasleft();
         (bytes4 sel, BeforeSwapDelta delta, uint24 fee) = hookV2.beforeSwap(address(this), keyV2, p, "");
-        console2.log("V203 gas: beforeSwap with an anchor update", g - gasleft());
         assertEq(sel, IHooks.beforeSwap.selector);
         assertEq(BeforeSwapDelta.unwrap(delta), 0, "zero delta");
         assertEq(fee, 0, "no LP-fee override");
@@ -567,6 +566,226 @@ contract V203AnchorTest is PoolBase {
     }
 }
 
+/// @dev Test-only. Repeats each step of the hook's anchor update on its own storage so each can be timed alone.
+///      The mapping is at slot 0 and the struct is the hook's, so the SLOAD and SSTORE costs are the hook's.
+contract AnchorGasProbe {
+    using StateLibrary for IPoolManager;
+
+    mapping(PoolId => AnchorLib.Anchor) internal _anchors;
+
+    event AnchorUpdated(PoolId indexed poolId, int24 snapTick, int56 emaTickX, uint40 timestamp);
+
+    struct Costs {
+        uint256 empty; // two back-to-back gasleft() calls: the cost of measuring
+        uint256 sload; // the struct to memory
+        uint256 slot0; // StateLibrary.getSlot0 (an extsload call)
+        uint256 next; // AnchorLib.next
+        uint256 sstore; // the struct from memory
+        uint256 log; // the event
+    }
+
+    function seed(PoolId id, AnchorLib.Anchor calldata a) external {
+        _anchors[id] = a;
+    }
+
+    function run(IPoolManager m, PoolId id, uint256 ts, uint256 bn) external returns (Costs memory c) {
+        uint256 g0 = gasleft();
+        uint256 g1 = gasleft();
+        c.empty = g0 - g1;
+
+        g0 = gasleft();
+        AnchorLib.Anchor memory a = _anchors[id];
+        g1 = gasleft();
+        c.sload = g0 - g1;
+
+        g0 = gasleft();
+        (, int24 tick,,) = m.getSlot0(id);
+        g1 = gasleft();
+        c.slot0 = g0 - g1;
+
+        g0 = gasleft();
+        a = AnchorLib.next(a, tick, ts, bn, 60);
+        g1 = gasleft();
+        c.next = g0 - g1;
+
+        g0 = gasleft();
+        _anchors[id] = a;
+        g1 = gasleft();
+        c.sstore = g0 - g1;
+
+        g0 = gasleft();
+        emit AnchorUpdated(id, a.snapTick, a.emaTickX, a.lastTimestamp);
+        g1 = gasleft();
+        c.log = g0 - g1;
+    }
+}
+
+/// @notice V2-03 gas, measured the way the hook pays it: one swap through the PoolManager on the hooked pool against
+/// the same swap on the unhooked twin, each from one snapshot, every account and slot made cold first (a swap is its
+/// own transaction). Logged only; V2-11 sets budgets.
+contract V203GasTest is PoolBase {
+    using PoolIdLibrary for PoolKey;
+    using StateLibrary for IPoolManager;
+
+    ConfluenceHook internal hookV2;
+    PoolKey internal keyV2;
+    PoolKey internal plainKey;
+
+    function setUp() public override {
+        super.setUp();
+        hookV2 = _deployHookV2();
+        keyV2 = _createPool(IHooks(address(hookV2)));
+        plainKey = _createPool(IHooks(address(0)));
+        vm.startPrank(trader);
+        mumb.approve(address(swapRouter), type(uint256).max);
+        IERC20Like(USDC).approve(address(swapRouter), type(uint256).max);
+        vm.stopPrank();
+    }
+
+    function _cool() internal {
+        vm.cool(POOL_MANAGER);
+        vm.cool(address(swapRouter));
+        vm.cool(USDC);
+        vm.cool(address(mumb));
+        vm.cool(address(hookV2));
+    }
+
+    /// @dev Gas of one exact-input USDC swap through the swap router, with everything cold.
+    function _gasSwap(PoolKey memory k) internal returns (uint256 used) {
+        IPoolManager.SwapParams memory p = IPoolManager.SwapParams({
+            zeroForOne: usdcForMumb(),
+            amountSpecified: -int256(100e6),
+            sqrtPriceLimitX96: usdcForMumb() ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
+        });
+        _cool();
+        vm.prank(trader);
+        uint256 g0 = gasleft();
+        swapRouter.swap(k, p, PoolSwapTest.TestSettings(false, false), "");
+        used = g0 - gasleft();
+    }
+
+    /// @dev swap 1 (first touch for the hooked pool), swap 2 (same block), swap 3 (next block, 12 s later).
+    function _three(PoolKey memory k) internal returns (uint256[3] memory g) {
+        uint256 snap = vm.snapshotState();
+        uint256 bn = vm.getBlockNumber();
+        uint256 ts = vm.getBlockTimestamp();
+        g[0] = _gasSwap(k);
+        g[1] = _gasSwap(k);
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 12);
+        g[2] = _gasSwap(k);
+        assertTrue(vm.revertToState(snap));
+        vm.roll(bn);
+        vm.warp(ts);
+    }
+
+    function test_V203_gasInsideSwap() public {
+        uint256[3] memory plain = _three(plainKey);
+        uint256[3] memory hooked = _three(keyV2);
+        console2.log("swap gas, plain pool  : first / same block / next block", plain[0], plain[1], plain[2]);
+        console2.log("swap gas, hooked pool : first / same block / next block", hooked[0], hooked[1], hooked[2]);
+        console2.log("hook cost, first-ever touch (zero slot -> anchor) ", hooked[0] - plain[0]);
+        console2.log("hook cost, same block (anchor current, read only)  ", hooked[1] - plain[1]);
+        console2.log("hook cost, new block (update of a stored anchor)   ", hooked[2] - plain[2]);
+        assertGt(hooked[0], plain[0]);
+        assertGt(hooked[2], hooked[1] - 1);
+    }
+
+    /// @dev Why a direct call from a test contract overstates the hook's cost: the same state-changing call to a probe
+    ///      costs about 20,000 more when the test contract makes it than when a relay contract does. A swap through the
+    ///      PoolManager (`test_V203_gasInsideSwap`) is the figure to use.
+    function test_V203_gasCallOverhead() public {
+        IPoolManager.SwapParams memory p = IPoolManager.SwapParams({
+            zeroForOne: usdcForMumb(),
+            amountSpecified: -int256(1e6),
+            sqrtPriceLimitX96: usdcForMumb() ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
+        });
+        PoolKey memory k = keyV2; // copied before timing
+        ConfluenceHook h = hookV2;
+        // warm the hook and the anchor slot with one real update, then a same-block read-only call, key in memory.
+        vm.prank(POOL_MANAGER);
+        h.beforeSwap(address(this), k, p, "");
+        uint256 g0 = gasleft();
+        uint256 v = h.EMA_HALF_LIFE();
+        console2.log("plain view call, no prank (EMA_HALF_LIFE)     ", g0 - gasleft(), v);
+        vm.prank(POOL_MANAGER);
+        g0 = gasleft();
+        v = h.EMA_HALF_LIFE();
+        console2.log("same view call under vm.prank                 ", g0 - gasleft(), v);
+        vm.prank(POOL_MANAGER);
+        g0 = gasleft();
+        h.beforeSwap(address(this), k, p, "");
+        console2.log("beforeSwap, same block, key already in memory ", g0 - gasleft());
+        vm.prank(POOL_MANAGER);
+        g0 = gasleft();
+        h.beforeSwap(address(this), k, p, "");
+        console2.log("  and again (identical)                       ", g0 - gasleft());
+        g0 = gasleft();
+        h.anchorOf(k.toId());
+        console2.log("anchorOf (view), same block, stored path      ", g0 - gasleft());
+        // The same read-only path with the real PoolManager as the caller of a contract-made call: a probe.
+        AnchorGasProbe probe = new AnchorGasProbe();
+        g0 = gasleft();
+        probe.seed(k.toId(), AnchorLib.Anchor(1, 1, 1, 1));
+        console2.log("probe.seed (one cold SSTORE zero->nonzero)    ", g0 - gasleft());
+        SeedRelay relay = new SeedRelay();
+        PoolId other = PoolId.wrap(bytes32(uint256(7)));
+        console2.log("probe.seed via a relay contract (same SSTORE) ", relay.seed(probe, other));
+        console2.log("probe.seed via a relay, slot already dirty    ", relay.seed(probe, other));
+    }
+
+    function test_V203_gasComponents() public {
+        AnchorGasProbe probe = new AnchorGasProbe();
+        PoolId id = keyV2.toId();
+        uint256 ts = vm.getBlockTimestamp();
+        uint256 bn = vm.getBlockNumber();
+        // An anchor a block and 12 s old, so `next` runs the full path; and one with no anchor (first touch).
+        probe.seed(id, AnchorLib.Anchor(uint40(ts - 12), uint64(bn - 1), 276_000, int56(276_000) * 65_536));
+        _report("existing anchor, dt = 12", probe, id, ts, bn);
+        // Worst case for exp2: dt = 59 of H = 60 sets most of the 32 fraction bits.
+        probe.seed(id, AnchorLib.Anchor(uint40(ts - 59), uint64(bn - 1), 276_000, int56(276_000) * 65_536));
+        _report("existing anchor, dt = 59 (most bits set)", probe, id, ts, bn);
+        probe.seed(id, AnchorLib.Anchor(uint40(ts - 12), uint64(bn - 1), 276_000, int56(276_000) * 65_536));
+        _reportFresh("first ever touch", probe, keyV2.toId(), ts, bn);
+    }
+
+    function _report(string memory what, AnchorGasProbe probe, PoolId id, uint256 ts, uint256 bn) internal {
+        vm.cool(address(probe));
+        vm.cool(POOL_MANAGER);
+        AnchorGasProbe.Costs memory c = probe.run(IPoolManager(POOL_MANAGER), id, ts, bn);
+        _log(what, c);
+    }
+
+    function _reportFresh(string memory what, AnchorGasProbe probe, PoolId id, uint256 ts, uint256 bn) internal {
+        // A different id has an all-zero slot: SLOAD of zero, SSTORE zero -> non-zero.
+        PoolId fresh = PoolId.wrap(keccak256(abi.encode(PoolId.unwrap(id), "fresh")));
+        vm.cool(address(probe));
+        vm.cool(POOL_MANAGER);
+        // The fresh id has no slot0 on the manager (price 0, tick 0): the shape of the costs is what matters here.
+        AnchorGasProbe.Costs memory c = probe.run(IPoolManager(POOL_MANAGER), fresh, ts, bn);
+        _log(what, c);
+    }
+
+    function _log(string memory what, AnchorGasProbe.Costs memory c) internal pure {
+        console2.log(what);
+        console2.log("   measuring overhead (2 gasleft)", c.empty);
+        console2.log("   SLOAD of the packed anchor    ", c.sload);
+        console2.log("   getSlot0 (extsload, cold)     ", c.slot0);
+        console2.log("   AnchorLib.next                ", c.next);
+        console2.log("   SSTORE of the anchor          ", c.sstore);
+        console2.log("   AnchorUpdated event           ", c.log);
+    }
+}
+
+contract SeedRelay {
+    function seed(AnchorGasProbe probe, PoolId id) external returns (uint256) {
+        uint256 g0 = gasleft();
+        probe.seed(id, AnchorLib.Anchor(1, 1, 1, 1));
+        return g0 - gasleft();
+    }
+}
+
 interface IERC20Like {
     function balanceOf(address) external view returns (uint256);
+    function approve(address, uint256) external returns (bool);
 }
