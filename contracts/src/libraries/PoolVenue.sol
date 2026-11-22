@@ -29,8 +29,9 @@ import {SplitMath} from "./SplitMath.sol";
 ///
 ///      Bounds: at most `MAX_TICK_RANGES` segments and `MAX_TICK_STEPS` steps (bitmap words read), empty ones
 ///      included. The walk also stops at the trader's `sqrtPriceLimitX96`. `truncated` is true when it stopped at a
-///      bound with liquidity left before the limit: the last segment is then not a real end, and `venues` leaves it
-///      uncapped ("the pool takes the rest"). Otherwise every cap is hard.
+///      bound before the limit, whatever the liquidity there: within the bounds a gap cannot be told from the end of
+///      the liquidity, and the real swap goes on past either. `venues` then leaves the last segment uncapped ("the
+///      pool takes the rest", ARCHITECTURE-v2 section 3). The only hard end is the trader's limit (D-30).
 ///
 ///      Fee: v4's combined swap fee for the swap's direction, as `Pool.swap` charges it (`Pool.sol:286-308`). It is
 ///      read from slot0, so it assumes the hook returns no LP-fee override from `beforeSwap` (CLAUDE.md hard rule).
@@ -72,7 +73,7 @@ library PoolVenue {
     /// @notice The pool in one direction.
     /// @param zeroForOne The direction read.
     /// @param swapFee v4's combined swap fee for that direction, in pips.
-    /// @param truncated The walk stopped at a bound with liquidity left: the last segment is not a hard end.
+    /// @param truncated The walk stopped at a bound before the limit: the last segment is not a hard end.
     /// @param segments In walk order, current range first; at most `MAX_TICK_RANGES`.
     struct Pool {
         bool zeroForOne;
@@ -118,7 +119,7 @@ library PoolVenue {
         for (uint256 step = 0; step < MAX_TICK_STEPS && w.count < MAX_TICK_RANGES && w.sqrtP != w.limit; step++) {
             _step(w, buf);
         }
-        p.truncated = w.sqrtP != w.limit && w.liq > 0;
+        p.truncated = w.sqrtP != w.limit; // a gap and the end of the liquidity look the same (D-30)
         uint256 count = w.count;
         assembly ("memory-safe") {
             mstore(buf, count) // shrink to the segments found (count <= MAX_TICK_RANGES)
