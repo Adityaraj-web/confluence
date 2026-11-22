@@ -100,6 +100,7 @@ docs/                      ARCHITECTURE-v2.md, specs/V2-*.md, DECISIONS, PROGRES
 - A swap's result is never worse than the pool alone from the same state, minus rounding. Tests assert it.
 - `hookData` is ignored. The hook needs no off-chain input.
 - The hook is immutable and ownerless: no owner, no admin, no proxy, no fee switch, no pause.
+- `beforeSwap` never returns an LP-fee override (the third return value is always 0). `PoolVenue` prices the pool with slot0's fee and assumes none (D-30).
 - We deploy no SwapVM or Aqua code. Custom logic goes only in `BandGuardV2`.
 - `BandGuardV2` is stateless and non-upgradeable: no storage, no owner, one `view` `extruction` for quote and swap; it never writes swap amounts, only checks and reverts. Its parameters come from the strategy bytes.
 - The guard reads the anchor (snapshot + EMA), never spot `slot0`.

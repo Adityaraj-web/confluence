@@ -6,6 +6,7 @@ import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SplitMath} from "../../src/libraries/SplitMath.sol";
 import {Vectors} from "../base/Vectors.sol";
+import {SplitHelpers} from "../base/SplitHelpers.sol";
 
 /// @dev External wrapper so gas can be measured around one call. Test-only.
 contract SplitMathHarness {
@@ -32,8 +33,7 @@ contract SplitMathHarness {
 
 /// @notice V2-01 acceptance: SplitMath against the V2-00 vectors and its fuzzed properties.
 /// @dev Index 0 is the pool everywhere (it takes the remainder). Tolerances and fuzz domains are recorded in D-29.
-contract V201SplitMathTest is Test {
-    uint256 internal constant E9 = 1e9;
+contract V201SplitMathTest is Test, SplitHelpers {
     uint256 internal constant MAX_AMOUNT = type(uint128).max;
     uint256 internal constant NONE = type(uint256).max;
 
@@ -140,19 +140,40 @@ contract V201SplitMathTest is Test {
         _neverWorse(seed, amountSeed, ANYPRICE);
     }
 
+    /// @dev Non-vacuity (V2-02, D-30): a run counts only if both of its solves compare at least two free active
+    ///      venues. Runs that compare fewer still pass every check above, then are rejected by `vm.assume`; Foundry
+    ///      fails the test when rejects outnumber accepted runs (runs = max-test-rejects), i.e. when fewer than about
+    ///      half the runs compare two or more. Foundry resets storage between runs, so its reject counter is the count.
+    /// forge-config: default.fuzz.runs = 1000
+    /// forge-config: default.fuzz.max-test-rejects = 1000
     function testFuzz_V201_equalMarginals(uint256 seed, uint256 amountSeed) public pure {
-        uint256 n = 1 + seed % 8;
-        SplitMath.Venue[] memory v = _venues(seed, n, WIDE);
+        (uint256 cmpIn, uint256 cmpOut) = _equalMarginalsCase(seed, amountSeed);
+        vm.assume(cmpIn >= 2 && cmpOut >= 2);
+    }
+
+    function _equalMarginalsCase(uint256 seed, uint256 amountSeed)
+        internal
+        pure
+        returns (uint256 cmpIn, uint256 cmpOut)
+    {
+        uint256 n = 2 + seed % 7;
+        SplitMath.Venue[] memory v = _marginalsVenues(seed, n);
         for (uint256 mode; mode < 2; mode++) {
             bool exactIn = mode == 0;
             uint256 amount = exactIn
-                ? _logUniform(amountSeed, 1, _min(MAX_AMOUNT, _sumX(v)))
-                : _logUniform(amountSeed, 1, _sumY(v) / 2);
+                ? _logUniform(amountSeed, _sumX(v) / 64, _min(MAX_AMOUNT, _sumX(v)))
+                : _logUniform(amountSeed, _sumY(v) / 64, _sumY(v) / 2);
             _clearCaps(v);
-            _randomCaps(v, seed ^ mode, amount);
+            // Half the makers capped at 0 to 1.5 times their uncapped share (as respectsCaps), so some pin and some do not.
+            uint256[] memory free = _solve(v, amount, exactIn);
+            for (uint256 i = 1; i < n; i++) {
+                uint256 w = _word(seed ^ mode, i, 5);
+                if (w % 2 == 1) v[i].cap = FullMath.mulDiv(free[i], (w >> 1) % 1501, 1000);
+            }
             uint256[] memory a = _solve(v, amount, exactIn);
             assertEq(_sum(a), amount, "sum");
-            _checkMarginals(v, a, exactIn);
+            if (exactIn) cmpIn = _checkMarginals(v, a, true);
+            else cmpOut = _checkMarginals(v, a, false);
         }
     }
 
@@ -299,18 +320,6 @@ contract V201SplitMathTest is Test {
         return SplitMath.Venue(w.x, w.y, w.feeE9, w.cap);
     }
 
-    /// @dev SwapVM exact in: flat fee rounded up on the input, then XYC rounded down (Fee.sol:89, XYCSwap.sol:22).
-    function _cpOutInt(SplitMath.Venue memory v, uint256 a) internal pure returns (uint256) {
-        uint256 net = a - Math.ceilDiv(a * v.feeE9, E9);
-        return FullMath.mulDiv(net, v.y, v.x + net);
-    }
-
-    /// @dev SwapVM exact out: XYC input rounded up, then the fee grossed up, rounded up (XYCSwap.sol:28, Fee.sol:95).
-    function _cpInInt(SplitMath.Venue memory v, uint256 b) internal pure returns (uint256) {
-        uint256 net = FullMath.mulDivRoundingUp(b, v.x, v.y - b);
-        return FullMath.mulDivRoundingUp(net, E9, E9 - v.feeE9);
-    }
-
     // =====================================================================================================
     // Property helpers
     // =====================================================================================================
@@ -374,7 +383,12 @@ contract V201SplitMathTest is Test {
 
     /// @dev Exact-in: (x + g a) / sqrt(g x y) is the same for every free active venue (equal marginals).
     ///      Exact-out: (y - b) sqrt(g) / sqrt(x y) is. 1e-6 on the marginal is 5e-7 on these (marginal ~ 1/h^2).
-    function _checkMarginals(SplitMath.Venue[] memory v, uint256[] memory a, bool exactIn) internal pure {
+    ///      Returns how many free active venues were compared (0 when every venue is pinned at its cap).
+    function _checkMarginals(SplitMath.Venue[] memory v, uint256[] memory a, bool exactIn)
+        internal
+        pure
+        returns (uint256 compared)
+    {
         uint256 n = v.length;
         uint256 ref;
         for (uint256 i; i < n; i++) {
@@ -383,9 +397,10 @@ contract V201SplitMathTest is Test {
                 break;
             }
         }
-        if (ref == 0) return; // every venue pinned at its cap
+        if (ref == 0) return 0; // every venue pinned at its cap
         for (uint256 i; i < n; i++) {
             if (_isFreeActive(v, a, i, exactIn)) {
+                compared++;
                 assertApproxEqRel(_h(v[i], a[i], exactIn), ref, 5e11, "marginals differ");
             } else if (a[i] <= (i == 0 ? n : 0) && v[i].cap > 0) {
                 // Unused (or only the pool's rounding dust): it must not start better than the level.
@@ -423,20 +438,6 @@ contract V201SplitMathTest is Test {
         for (uint256 i; i < a.length; i++) {
             assertGt(a[i], 0, string.concat(ctx, ": every venue should be used"));
         }
-    }
-
-    /// @dev Exact curve output, one floor: floor(y g a / (x 1e9 + g a)).
-    function _outFloor(SplitMath.Venue memory v, uint256 a) internal pure returns (uint256) {
-        if (a == 0) return 0;
-        uint256 g = E9 - v.feeE9;
-        return FullMath.mulDiv(v.y * g, a, v.x * E9 + g * a);
-    }
-
-    /// @dev Exact curve input, one ceil: ceil(x 1e9 b / (g (y - b))).
-    function _inCeil(SplitMath.Venue memory v, uint256 b) internal pure returns (uint256) {
-        if (b == 0) return 0;
-        uint256 g = E9 - v.feeE9;
-        return FullMath.mulDivRoundingUp(v.x * E9, b, g * (v.y - b));
     }
 
     /// @dev Marginal input per output wei at `b` (capped below the reserve), rounded up, saturating.
@@ -480,6 +481,23 @@ contract V201SplitMathTest is Test {
         }
     }
 
+    /// @dev equalMarginals' own generator (D-30; no other test uses it). With independent WIDE prices one venue
+    ///      dominates: only 1.7% of runs compared two or more venues in both modes (2,000 fixed seeds). Here, 71%:
+    ///      one size scale per run (x in 6e11 to 2^104, y below 2^112 as `_h` needs; venues within 16x of each
+    ///      other), one price per run (y/x in 1e-2 to 1e2) with each venue within [0.8, 1.25] of it, fees below 3%.
+    function _marginalsVenues(uint256 seed, uint256 n) internal pure returns (SplitMath.Venue[] memory v) {
+        v = new SplitMath.Venue[](n);
+        uint256 scale = _logUniform(_word(seed, 0, 11), 1e13, 1 << 100);
+        uint256 price = _logUniform(_word(seed, 0, 12), 1e16, 1e20); // 1e18 = 1
+        for (uint256 i; i < n; i++) {
+            v[i].x = FullMath.mulDiv(scale, _logUniform(_word(seed, i, 1), 625e14, 16e18), 1e18);
+            uint256 d = 8e17 + _word(seed, i, 2) % 45e16; // 0.8 to 1.25
+            v[i].y = FullMath.mulDiv(FullMath.mulDiv(v[i].x, price, 1e18), d, 1e18);
+            v[i].feeE9 = uint32(_word(seed, i, 3) % 3e7);
+            v[i].cap = NONE;
+        }
+    }
+
     /// @dev Half the makers get a cap in [1, maxCap]; the pool is never capped.
     function _randomCaps(SplitMath.Venue[] memory v, uint256 seed, uint256 maxCap) internal pure {
         if (maxCap == 0) return;
@@ -495,43 +513,12 @@ contract V201SplitMathTest is Test {
         }
     }
 
-    /// @dev Values biased to the envelope edge: 2^128 +- 2, small, raw, or log-uniform below 2^128.
-    function _edgy(uint256 w) internal pure returns (uint256) {
-        uint256 k = w % 5;
-        if (k == 0) return (1 << 128) - 2 + (w >> 8) % 5;
-        if (k == 1) return (w >> 8) % 1000;
-        if (k == 2) return w;
-        return _logUniform(w >> 8, 1, MAX_AMOUNT);
-    }
-
-    /// @dev A value in [lo, hi] whose bit length is uniform over the range's bit lengths.
-    function _logUniform(uint256 w, uint256 lo, uint256 hi) internal pure returns (uint256 r) {
-        if (hi <= lo) return lo;
-        uint256 loBits = Math.log2(lo);
-        uint256 hiBits = Math.log2(hi);
-        uint256 bits = loBits + w % (hiBits - loBits + 1);
-        uint256 mantissa = uint256(keccak256(abi.encode(w)));
-        r = bits == 0 ? 1 : (1 << bits) | (mantissa & ((1 << bits) - 1));
-        if (r < lo) r = lo;
-        if (r > hi) r = hi;
-    }
-
-    function _word(uint256 seed, uint256 i, uint256 tag) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encode(seed, i, tag)));
-    }
-
     // =====================================================================================================
     // Small maths
     // =====================================================================================================
 
     function _solve(SplitMath.Venue[] memory v, uint256 amount, bool exactIn) internal pure returns (uint256[] memory) {
         return exactIn ? SplitMath.solveExactIn(v, amount) : SplitMath.solveExactOut(v, amount);
-    }
-
-    function _sum(uint256[] memory a) internal pure returns (uint256 s) {
-        for (uint256 i; i < a.length; i++) {
-            s += a[i];
-        }
     }
 
     function _sumX(SplitMath.Venue[] memory v) internal pure returns (uint256 s) {

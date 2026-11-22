@@ -44,6 +44,9 @@ library SplitMath {
     /// @notice Most venues one solve takes (V2-01). Bounds every loop over venues and every pass.
     uint256 internal constant MAX_VENUES = 8;
 
+    /// @notice Most pool segments one piecewise solve takes (V2-02). `PoolVenue.MAX_TICK_RANGES` is this number.
+    uint256 internal constant MAX_SEGMENTS = 8;
+
     /// @notice Fee scale: 1e9 = 100% (SwapVM `BPS`, swap-vm/src/instructions/Fee.sol:17).
     uint256 internal constant FEE_SCALE = 1e9;
 
@@ -68,6 +71,37 @@ library SplitMath {
     /// @notice Cheapest split for `amountOut` output. `b[i]` is the output venue `i` gives; the parts sum to `amountOut`.
     function solveExactOut(Venue[] memory v, uint256 amountOut) internal pure returns (uint256[] memory b) {
         return _solve(v, amountOut, false);
+    }
+
+    /// @notice Best split of `amountIn` between a pool given as tick-range segments and up to `MAX_VENUES - 1` makers
+    ///         (V2-02, ARCHITECTURE-v2 section 3, pool paragraph).
+    /// @param pool The pool's segments in the swap's direction, current range first (`PoolVenue.venues`). Each cap is
+    ///        the input that moves the price to the segment's end; the last may be uncapped (`type(uint256).max`:
+    ///        the walk stopped early and the pool takes the rest).
+    /// @param makers Makers, each with its own cap.
+    /// @return a `a[0]` is the pool's total input, `a[1 + j]` maker j's; the parts sum to `amountIn`.
+    /// @return crossed Segments the pool's share fills completely: its share ends inside segment `crossed`.
+    ///         `crossed == pool.length` (only with a hard last cap) means the share reaches the end of every walked
+    ///         segment. It is exactly their total when the makers take the rest, and more than that only when the
+    ///         makers cannot: then the pool cannot fill its share (PROGRESS carry-over (a) for V2-07).
+    function solveExactIn(Venue[] memory pool, Venue[] memory makers, uint256 amountIn)
+        internal
+        pure
+        returns (uint256[] memory a, uint256 crossed)
+    {
+        return _solvePiecewise(pool, makers, amountIn, true);
+    }
+
+    /// @notice Cheapest split for `amountOut` between a pool given as tick-range segments and up to `MAX_VENUES - 1`
+    ///         makers. As `solveExactIn`, with each segment's cap the output at its end and `b[0]` the pool's total
+    ///         output. A share past a segment's reserve is past its cap too (the output at the end is below the
+    ///         reserve), so it crosses (the D-29 carry-over).
+    function solveExactOut(Venue[] memory pool, Venue[] memory makers, uint256 amountOut)
+        internal
+        pure
+        returns (uint256[] memory b, uint256 crossed)
+    {
+        return _solvePiecewise(pool, makers, amountOut, false);
     }
 
     /// @notice floor(sqrt(floor(a * b / d))), the product taken in 512 bits.
@@ -119,6 +153,61 @@ library SplitMath {
             if (!_pinOver(v, w, part)) break; // nothing over its cap: `part` is the answer
         }
         _assemble(w, amount, out);
+    }
+
+    /// @dev Pass k solves segment k plus the makers for what is left. If the pool's share reaches the segment's cap,
+    ///      the segment is fixed (its cap joins the pool's total), and the next pass starts from the next segment;
+    ///      the reference's `solve_pool_exact_in/out` (reference/waterfill.py). A segment that is not the last is
+    ///      solved uncapped and compared with its cap. This makes the same decision as the reference's capped solve,
+    ///      because a capped solve pins the pool only when its share in some pass exceeds the cap, and the pool's
+    ///      share only grows from pass to pass (pinning makers raises the level). It saves the pin pass. The last
+    ///      segment keeps its cap, so the makers absorb what the pool cannot give at a hard end. Bounded by
+    ///      `MAX_SEGMENTS` passes. Outside the envelope (more than `MAX_SEGMENTS` segments or `MAX_VENUES - 1` makers)
+    ///      the result is pool-only. An empty pool puts an unusable venue at index 0: the makers solve alone and
+    ///      index 0 takes the remainder.
+    function _solvePiecewise(Venue[] memory pool, Venue[] memory makers, uint256 amount, bool exactIn)
+        private
+        pure
+        returns (uint256[] memory out, uint256 crossed)
+    {
+        uint256 m = makers.length;
+        out = new uint256[](m + 1);
+        if (amount == 0) return (out, 0);
+        if (pool.length > MAX_SEGMENTS || m >= MAX_VENUES) {
+            out[0] = amount;
+            return (out, 0);
+        }
+        Venue[] memory v = new Venue[](m + 1);
+        for (uint256 j; j < m; j++) {
+            v[j + 1] = makers[j];
+        }
+        if (pool.length == 0) {
+            v[0] = Venue(0, 0, 0, type(uint256).max);
+            uint256[] memory r0 = _solve(v, amount, exactIn);
+            for (uint256 i; i <= m; i++) {
+                out[i] = r0[i];
+            }
+            return (out, 0);
+        }
+
+        uint256 last = pool.length - 1;
+        uint256 prefix = 0;
+        uint256 remaining = amount;
+        for (uint256 k = 0; k < MAX_SEGMENTS && k <= last; k++) {
+            Venue memory s = pool[k];
+            v[0] = Venue(s.x, s.y, s.feeE9, k == last ? s.cap : type(uint256).max); // a copy: the caller's is untouched
+            uint256[] memory r = _solve(v, remaining, exactIn);
+            if (k == last || r[0] < s.cap) {
+                out[0] = prefix + r[0];
+                for (uint256 j = 1; j <= m; j++) {
+                    out[j] = r[j];
+                }
+                return (out, r[0] >= s.cap ? k + 1 : k);
+            }
+            // r[0] <= remaining, so the cap fits.
+            prefix += s.cap;
+            remaining -= s.cap;
+        }
     }
 
     /// @dev Pins every free venue whose share is over its cap at the cap (or at what is left, whichever is smaller).

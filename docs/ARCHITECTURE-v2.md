@@ -86,6 +86,7 @@ BandGuardV2 passes a fill only if:
 | `MAX_STRATEGIES` | 6 | hook constant | bounds reads per swap |
 | `MAX_LEGS` | 3 | hook constant | each leg is a router call (~152k gas in v1) |
 | `MAX_TICK_RANGES` | 8 | hook constant | bounds the pool walk |
+| `MAX_TICK_STEPS` | 16 | `PoolVenue` constant (D-30) | bounds the swap-loop steps the walk reads, including steps with no liquidity or width, which make no segment |
 | `MIN_LEG_BPS` | 50 (0.5%) | hook constant | dust legs cost more gas than they save |
 | `EMA_HALF_LIFE` | 60 s | hook constant | manipulation cost vs lag |
 | `bandBps` | default 200 | maker, strategy bytes | as v1 |
