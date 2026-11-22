@@ -91,14 +91,20 @@ contract ConfluenceHook is IHooks {
         if (sqrtPriceX96 == 0) revert PoolNotInitialized();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function beforeInitialize(address, PoolKey calldata, uint160) external pure returns (bytes4) {
         revert HookNotImplemented();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function afterInitialize(address, PoolKey calldata, uint160, int24) external pure returns (bytes4) {
         revert HookNotImplemented();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function beforeAddLiquidity(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, bytes calldata)
         external
         pure
@@ -107,6 +113,8 @@ contract ConfluenceHook is IHooks {
         revert HookNotImplemented();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function afterAddLiquidity(
         address,
         PoolKey calldata,
@@ -118,6 +126,8 @@ contract ConfluenceHook is IHooks {
         revert HookNotImplemented();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function beforeRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -127,6 +137,8 @@ contract ConfluenceHook is IHooks {
         revert HookNotImplemented();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function afterRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -138,6 +150,8 @@ contract ConfluenceHook is IHooks {
         revert HookNotImplemented();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function afterSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
         external
         pure
@@ -146,10 +160,14 @@ contract ConfluenceHook is IHooks {
         revert HookNotImplemented();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) {
         revert HookNotImplemented();
     }
 
+    /// @notice Not implemented: always reverts `HookNotImplemented`. Anyone may call it, to no effect; the
+    /// PoolManager never does, because this hook's address flags are off.
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) {
         revert HookNotImplemented();
     }
