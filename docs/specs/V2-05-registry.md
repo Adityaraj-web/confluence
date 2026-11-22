@@ -17,7 +17,7 @@ Many makers per pool, each strategy verified to be a shape the hook can price ex
 
 ## Behaviour
 - Template T1, in order: optional `_salt`, `_flatFeeAmountInXD(feeE9)`, `_xycSwapXD`, `_extruction(BandGuardV2, args)`. Opcode indices from `AquaOpcodes._opcodes()`, never typed in. No KYC opcode.
-- `register(PoolKey key, Params p)` where `Params { uint32 feeE9; uint16 bandBps; uint16 driftBps; bool exclusive; bytes32 salt; }`, `msg.sender` is the maker. The hook rebuilds the order (maker, program), hashes it, and requires Aqua to report it shipped by the maker with the canonical router as app, 2 tokens, not docked (`rawBalances`).
+- `register(PoolKey key, Params p)` where `Params { uint32 feeE9; uint16 bandBps; uint16 driftTicks; bool exclusive; bytes32 salt; }`, `msg.sender` is the maker. The hook rebuilds the order (maker, program), hashes it, and requires Aqua to report it shipped by the maker with the canonical router as app, 2 tokens, not docked (`rawBalances`).
 - Storage per slot: maker, params, strategy hash. Order bytes rebuilt in memory at swap time.
 - One strategy per maker per pool. `MAX_STRATEGIES` = 6. When full, a newcomer's real depth must exceed the smallest slot's; that slot is evicted. Real depth = min(virtual output-side balance, wallet balance, allowance to Aqua), both sides valued at the snapshot price.
 - `unregister(key)`: maker only. `evict(key, maker)`: anyone, only if the strategy is docked or real depth is zero.

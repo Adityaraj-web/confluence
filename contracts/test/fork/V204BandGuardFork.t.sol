@@ -260,8 +260,7 @@ contract V204BandGuardForkTest is PoolBase, StrategyLib {
         (uint256 walletMumb, uint256 walletUsdc) = balances(priya);
         assertEq(walletMumb, PRIYA_MUMB - EXPECTED_MUMB_OUT, "Priya wallet MUMB");
         assertEq(walletUsdc, PRIYA_USDC + FILL_USDC, "Priya wallet USDC");
-        (uint256 vMumb, uint256 vUsdc) =
-            IAqua(AQUA).safeBalances(priya, ROUTER, strategyHash, address(mumb), USDC);
+        (uint256 vMumb, uint256 vUsdc) = IAqua(AQUA).safeBalances(priya, ROUTER, strategyHash, address(mumb), USDC);
         assertEq(vMumb, SHIPPED_MUMB - EXPECTED_MUMB_OUT, "virtual MUMB");
         assertEq(vUsdc, FAIR_USDC + FILL_USDC, "virtual USDC");
         _assertHoldsNothing(address(hookV2), "hook");
@@ -307,7 +306,7 @@ contract V204BandGuardForkTest is PoolBase, StrategyLib {
         _fund(FILL_USDC);
 
         // Before the block's first swap the anchor is computed lazily; the quote is a STATICCALL through the router.
-        (, , bool fresh) = hookV2.anchorOfX(idV2);
+        (,, bool fresh) = hookV2.anchorOfX(idV2);
         assertFalse(fresh, "premise: lazy");
         (uint256 q0In, uint256 q0Out, bytes32 q0Hash) = helper.quoteExactIn(order, USDC, address(mumb), FILL_USDC, 0);
 

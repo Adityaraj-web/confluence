@@ -133,6 +133,8 @@ contract BandGuardV2 is IExtruction, IStaticExtruction {
         address hooks = address(a.key.hooks);
         if (a.flags & BandGuardArgs.FLAG_EXCLUSIVE != 0 && query.taker != hooks) revert TakerNotHook(query.taker);
 
+        // `fresh` is not needed: lazy and stored anchors are equal by construction (D-31).
+        // forge-lint: disable-next-line(unused-return)
         (int24 snapTick, int56 emaTickX,) = IConfluenceAnchor(hooks).anchorOfX(a.key.toId());
         _checkDrift(snapTick, emaTickX, a.driftTicks);
 
@@ -168,7 +170,9 @@ contract BandGuardV2 is IExtruction, IStaticExtruction {
         int256 gap = int256(snapTick) * TICK_SCALE - int256(emaTickX);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint256 distance = uint256(gap < 0 ? -gap : gap);
-        if (distance > uint256(driftTicks) * uint256(TICK_SCALE)) revert AnchorDrift(snapTick, emaTickX, driftTicks);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint256 allowed = uint256(driftTicks) * uint256(TICK_SCALE); // TICK_SCALE is the positive constant 2^16
+        if (distance > allowed) revert AnchorDrift(snapTick, emaTickX, driftTicks);
     }
 
     /// @dev Both prices are currency1 per currency0 in one scale (see `BandExceeded`): at least 64 bits of precision at

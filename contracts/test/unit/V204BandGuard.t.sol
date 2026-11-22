@@ -136,7 +136,11 @@ contract V204BandGuardTest is Test {
     }
 
     /// @dev Registers of a fill whose execution price (currency1 per currency0, in the guard's scale) is `exec`.
-    function _regs(address tokenIn, uint256 exec, uint256 unit) internal pure returns (uint256 amountIn, uint256 amountOut) {
+    function _regs(address tokenIn, uint256 exec, uint256 unit)
+        internal
+        pure
+        returns (uint256 amountIn, uint256 amountOut)
+    {
         return tokenIn == TOKEN0 ? (unit, exec) : (exec, unit);
     }
 
@@ -391,7 +395,8 @@ contract V204BandGuardTest is Test {
             );
         }
         // Every key field is part of the pool id: a changed field names a pool the hook does not know.
-        bytes memory otherFee = abi.encodePacked(PM, TOKEN0, TOKEN1, LP_FEE + 1, SPACING, address(mock), BAND, DRIFT, uint8(0));
+        bytes memory otherFee =
+            abi.encodePacked(PM, TOKEN0, TOKEN1, LP_FEE + 1, SPACING, address(mock), BAND, DRIFT, uint8(0));
         bytes memory otherSpacing =
             abi.encodePacked(PM, TOKEN0, TOKEN1, LP_FEE, SPACING + 1, address(mock), BAND, DRIFT, uint8(0));
         bytes[2] memory others = [otherFee, otherSpacing];
