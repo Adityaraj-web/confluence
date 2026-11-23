@@ -123,8 +123,9 @@ contract ConfluenceSplitter {
         MakerVenue.Maker[] memory ms =
             MakerVenue.read(pm, key, h.bandGuard(), h.strategiesOf(id), zeroForOne, snapTick, emaTickX);
 
+        uint256 n = Math.min(ms.length, MakerVenue.MAX_MAKERS);
         bool[] memory live = new bool[](ms.length);
-        for (uint256 i; i < ms.length; i++) {
+        for (uint256 i; i < n; i++) {
             p.capMin[i] = ms[i].capMin;
             p.capIn[i] = ms[i].capIn;
             p.status[i] = _code(ms[i].status);
@@ -148,13 +149,13 @@ contract ConfluenceSplitter {
         bool better = !(pool.truncated && p.poolIn > p.walked);
         if (better) {
             uint256 makersOut = 0;
-            for (uint256 i; i < ms.length; i++) {
+            for (uint256 i; i < n; i++) {
                 makersOut += p.amountOut[i];
             }
             better = p.poolOut + makersOut >= p.poolOnlyOut + p.tail;
         }
         if (!better) {
-            for (uint256 i; i < ms.length; i++) {
+            for (uint256 i; i < n; i++) {
                 if (p.amountIn[i] == 0) continue;
                 p.status[i] = LegStatus.SKIP_NOT_BETTER;
                 p.amountIn[i] = 0;
@@ -197,7 +198,8 @@ contract ConfluenceSplitter {
         Plan memory p
     ) private pure returns (bool dropped) {
         uint256 kept = 0;
-        for (uint256 j; j < idx.length; j++) {
+        uint256 m = Math.min(idx.length, MakerVenue.MAX_MAKERS);
+        for (uint256 j; j < m; j++) {
             uint256 i = idx[j];
             if (_tooSmall(a[j + 1], ms[i].capMin, amount)) {
                 live[i] = false;
@@ -210,7 +212,7 @@ contract ConfluenceSplitter {
         for (uint256 r = 0; r < MakerVenue.MAX_MAKERS && kept > MAX_LEGS; r++) {
             uint256 worst = type(uint256).max;
             uint256 at = 0;
-            for (uint256 j; j < idx.length; j++) {
+            for (uint256 j; j < m; j++) {
                 if (live[idx[j]] && a[j + 1] < worst) (worst, at) = (a[j + 1], idx[j]);
             }
             live[at] = false;
@@ -235,10 +237,11 @@ contract ConfluenceSplitter {
     ) private view {
         uint256 pmLeft = IERC20(tokenIn).balanceOf(address(pm));
         uint256 sumIn = 0;
+        uint256 m = Math.min(idx.length, MakerVenue.MAX_MAKERS);
         for (uint256 r; r < MakerVenue.MAX_MAKERS; r++) {
             uint256 best = 0;
             uint256 at = type(uint256).max;
-            for (uint256 j; j < idx.length; j++) {
+            for (uint256 j; j < m; j++) {
                 uint256 i = idx[j];
                 if (live[i] && p.amountIn[i] == 0 && a[j + 1] > best) (best, at) = (a[j + 1], i);
             }

@@ -22,7 +22,8 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 
 import {BandExceeded, TakerNotHook} from "../../src/BandGuardV2.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
-import {ConfluenceSplitter, LegStatus, Plan} from "../../src/ConfluenceSplitter.sol";
+import {ConfluenceSplitter, IConfluenceHookView, LegStatus, Plan} from "../../src/ConfluenceSplitter.sol";
+import {SplitMath} from "../../src/libraries/SplitMath.sol";
 import {MakerVenue} from "../../src/libraries/MakerVenue.sol";
 import {PoolVenue} from "../../src/libraries/PoolVenue.sol";
 import {StrategyTemplate} from "../../src/libraries/StrategyTemplate.sol";
@@ -856,6 +857,66 @@ contract V207SplitTest is RegistryBase, V207Helpers {
         console2.log("PoolManager MUMB", pmMumb, "legs", sumIn);
     }
 
+    /// @dev `MAX_LEGS` and the re-solve. Four makers whose first-solve shares all qualify (each at least its
+    ///      `capMin` and `MIN_LEG_BPS`): the smallest share is dropped (`SKIP_MIN_LEG`), and the three kept get exactly
+    ///      a fresh `SplitMath` solve over the pool and those three, each at least its first-solve share. The swap
+    ///      then fills exactly those legs.
+    function test_V207_maxLegsKeepsLargestAndResolves() public {
+        _initExact(keyV2);
+        M[] memory three = _threeMakers();
+        M[] memory ms = new M[](4);
+        for (uint256 j; j < 3; j++) {
+            ms[j] = three[j];
+        }
+        ms[3] = _joinM(keyV2, makers[3], 40_000e18, 40_000e6, _p());
+        uint256 amount = 2_000 * USDC_1;
+
+        (int24 sn, int56 e,) = hookV2.anchorOfX(idV2);
+        PoolVenue.Pool memory pool = PoolVenue.read(manager, idV2, keyV2.tickSpacing, true, _lim(true));
+        MakerVenue.Maker[] memory mk = MakerVenue.read(
+            manager, keyV2, _guard(), IConfluenceHookView(address(hookV2)).strategiesOf(idV2), true, sn, e
+        );
+        SplitMath.Venue[] memory pv = PoolVenue.venues(pool, true);
+        (SplitMath.Venue[] memory mv,) = MakerVenue.toVenues(mk);
+        assertEq(mv.length, 4, "premise: four live makers");
+        (uint256[] memory a4,) = SplitMath.solveExactIn(pv, mv, amount);
+        uint256 smallest;
+        for (uint256 j; j < 4; j++) {
+            assertGe(a4[j + 1], mk[j].capMin, "premise: every first-solve share is at least its capMin");
+            assertGe(a4[j + 1] * 10_000, amount * hookV2.MIN_LEG_BPS(), "premise: every share is at least 0.5%");
+            if (a4[j + 1] < a4[smallest + 1]) smallest = j;
+        }
+
+        SplitMath.Venue[] memory mv3 = new SplitMath.Venue[](3);
+        uint256[3] memory kept;
+        uint256 k;
+        for (uint256 j; j < 4; j++) {
+            if (j == smallest) continue;
+            (mv3[k], kept[k]) = (mv[j], j);
+            k++;
+        }
+        (uint256[] memory a3,) = SplitMath.solveExactIn(pv, mv3, amount);
+
+        Plan memory p = _plan(keyV2, true, amount);
+        assertEq(p.status[smallest], LegStatus.SKIP_MIN_LEG, "the smallest share is dropped");
+        assertEq(p.amountIn[smallest], 0, "dropped: no input");
+        for (uint256 j; j < 3; j++) {
+            uint256 i = kept[j];
+            assertEq(p.status[i], LegStatus.FILLED, "kept");
+            assertEq(p.amountIn[i], a3[j + 1], "kept leg = the re-solve over the three");
+            assertGe(a3[j + 1], a4[i + 1], "a kept share only grows");
+        }
+
+        Book memory b0 = _book(ms);
+        Run memory r = _run(keyV2, true, amount, "");
+        _assertBooks(b0, _book(ms), true, amount, r, ms);
+        for (uint256 j; j < 4; j++) {
+            assertEq(r.legs[j].amountIn, p.amountIn[j], "the swap fills the plan");
+            assertEq(r.legs[j].status, uint8(p.status[j]), "the swap reports the plan's codes");
+        }
+        console2.log("dropped maker slot", smallest, "first-solve share", a4[smallest + 1]);
+    }
+
     /// @dev Full-swap gas (through PoolSwapTest, every touched account cooled first) for pool-only and 1, 3 and 6
     ///      makers, next to v1's hinted swap. No ceilings (V2-11). Swaps above 1,000,000 gas are flagged.
     function test_V207_gasLog() public {
@@ -960,7 +1021,8 @@ contract V207SplitTest is RegistryBase, V207Helpers {
     /// @dev Exact books for a swap in which the trader paid `paid` (the whole input unless the pool stopped early): the
     ///      trader got the legs plus the pool's leg (what left the PoolManager); the PoolManager kept the pool's share;
     ///      each maker moved exactly its leg in wallet and Aqua, each filled leg equals SwapVM's quote from the
-    ///      pre-swap balances; the hook holds nothing. `ms[j]` must be registry slot j.
+    ///      pre-swap balances; the hook holds nothing and every allowance (hook to router, router to Aqua) is 0.
+    ///      `ms[j]` must be registry slot j.
     function _assertBooks(Book memory b0, Book memory b1, bool zfo, uint256 paid, Run memory r, M[] memory ms)
         internal
         view
@@ -992,6 +1054,7 @@ contract V207SplitTest is RegistryBase, V207Helpers {
                 assertEq(l.amountIn + l.amountOut, 0, "a skipped slot moves nothing");
             }
         }
+        _assertClean();
     }
 
     function _assertClean() internal view {
