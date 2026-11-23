@@ -209,6 +209,8 @@ library MakerVenue {
 
     /// @notice The drift predicate exactly as `BandGuardV2` evaluates it.
     function driftPasses(int24 snapTick, int56 emaTickX, uint16 driftTicks) internal pure returns (bool) {
+        // TICK_SCALE is the constant 2^16, so the cast is exact.
+        // forge-lint: disable-next-line(unsafe-typecast)
         int256 gap = int256(snapTick) * int256(TICK_SCALE) - int256(emaTickX);
         // forge-lint: disable-next-line(unsafe-typecast)
         uint256 distance = uint256(gap < 0 ? -gap : gap);
@@ -217,14 +219,14 @@ library MakerVenue {
 
     /// @notice The live makers as `SplitMath` venues (cap = `capIn`, exact-input units) and each venue's index in `ms`.
     function toVenues(Maker[] memory ms) internal pure returns (SplitMath.Venue[] memory v, uint256[] memory index) {
-        uint256 n;
-        for (uint256 i; i < ms.length; i++) {
+        uint256 n = 0;
+        for (uint256 i = 0; i < ms.length; i++) {
             if (ms[i].status == Status.OK) n++;
         }
         v = new SplitMath.Venue[](n);
         index = new uint256[](n);
-        uint256 k;
-        for (uint256 i; i < ms.length; i++) {
+        uint256 k = 0;
+        for (uint256 i = 0; i < ms.length; i++) {
             if (ms[i].status != Status.OK) continue;
             v[k] = SplitMath.Venue({x: ms[i].x, y: ms[i].y, feeE9: ms[i].feeE9, cap: ms[i].capIn});
             index[k] = i;
