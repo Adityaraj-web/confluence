@@ -8,7 +8,6 @@ import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IAqua} from "@1inch/aqua/src/interfaces/IAqua.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
@@ -18,6 +17,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
 import {BandGuardV2} from "./BandGuardV2.sol";
 import {AnchorLib} from "./libraries/AnchorLib.sol";
+import {MakerVenue} from "./libraries/MakerVenue.sol";
 import {StrategyTemplate} from "./libraries/StrategyTemplate.sol";
 
 /// @title ConfluenceHook (v2)
@@ -316,9 +316,9 @@ contract ConfluenceHook is IHooks {
     }
 
     /// @dev What Aqua can pull of one token: the virtual balance, capped by the wallet and by the allowance to Aqua.
+    ///      The same function V2-06's `MakerVenue` uses for a maker's cap (carry-over 1).
     function _real(address token, address maker, uint256 virtualBalance) private view returns (uint256) {
-        // forge-lint: disable-next-line(calls-loop)
-        return Math.min(virtualBalance, Math.min(IERC20(token).balanceOf(maker), IERC20(token).allowance(maker, AQUA)));
+        return MakerVenue.real(token, maker, virtualBalance);
     }
 
     /// @dev The slot with the smallest live depth (the lowest index on a tie) and why it can go.

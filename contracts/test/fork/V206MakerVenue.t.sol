@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IAqua} from "@1inch/aqua/src/interfaces/IAqua.sol";
 import {ISwapVM} from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import {SwapQuery, SwapRegisters} from "@1inch/swap-vm/src/libs/VM.sol";
@@ -388,13 +389,20 @@ contract V206MakerVenueMathTest is Test {
         uint256 ref = s * s;
         uint256 lim = FullMath.mulDiv(ref, bps, 10_000);
         uint256 execT = edgeSeed % 2 == 0 ? ref + lim : ref - lim;
+        if (execT < 2) execT = 2; // a band of 100% has no lower edge: stay off zero
         uint256 e = (edgeSeed >> 1) % 5;
         if (e == 0) execT -= 1;
         else if (e == 2) execT += 1;
         else if (e == 3) execT += ref / 1e9;
         else if (e == 4) execT -= ref / 1e9 < execT ? ref / 1e9 : 0;
         uint256 net = bound(nSeed, 1e3, 1e27);
-        uint256 out = zeroIn ? FullMath.mulDiv(net, execT, 2 ** 192) : FullMath.mulDiv(net, 2 ** 192, execT);
+        uint256 out;
+        if (zeroIn) {
+            out = FullMath.mulDiv(net, execT, 2 ** 192);
+        } else {
+            (uint256 hi,) = Math.mul512(net, 2 ** 192);
+            out = hi >= execT ? type(uint256).max : FullMath.mulDiv(net, 2 ** 192, execT); // saturating when too large
+        }
         _checkMirror(snap, emaX, zeroIn, bps, drift, net, out);
     }
 
@@ -695,8 +703,9 @@ contract V206MakerVenueForkTest is RegistryBase {
             assertLt(slack, 2 ** 70, "the guard never refused above the cap");
             emit log_named_uint(zfo ? "token0 in: smallest power-of-two slack past the cap" : "token1 in: slack", slack);
             _giveHelper(_tokenIn(zfo), m.capIn + slack);
+            ISwapVM.Order memory ord = _order(m0, p); // built first: `expectPartialRevert` is for the next call only
             vm.expectPartialRevert(BandExceeded.selector);
-            helper.swapExactIn(_order(m0, p), _tokenIn(zfo), _tokenOut(zfo), m.capIn + slack, 0, trader);
+            helper.swapExactIn(ord, _tokenIn(zfo), _tokenOut(zfo), m.capIn + slack, 0, trader);
         }
     }
 
@@ -735,14 +744,27 @@ contract V206MakerVenueForkTest is RegistryBase {
         }
     }
 
+    /// @dev A fill at the cap succeeds and gives the predicted output; the venue's reserves are Aqua's virtual balances.
+    function _assertFillsAtCap(address maker, StrategyTemplate.Params memory p, bool zfo)
+        internal
+        returns (MakerVenue.Maker memory m)
+    {
+        m = _one(maker, zfo);
+        assertEq(uint8(m.status), uint8(MakerVenue.Status.OK), "status");
+        bytes32 h = _hash(maker, p);
+        assertEq(m.x, _virtual(maker, h, _tokenIn(zfo)), "x is Aqua's virtual input balance");
+        assertEq(m.y, _virtual(maker, h, _tokenOut(zfo)), "y is Aqua's virtual output balance");
+        uint256 snap = vm.snapshotState();
+        _fillExact(maker, p, zfo, m.capIn, m.capOut);
+        vm.revertToState(snap);
+    }
+
     function test_V206_capFollowsWalletAllowanceAndVirtual() public {
         StrategyTemplate.Params memory p = _open();
-        // m0: wallet cut. m1: allowance cut. m2: a virtual balance lower than the wallet, then a fill by someone else.
+        // m0: wallet cut. m1: allowance cut. m2: virtual balances moved by someone else's fill.
         _joinOpen(makers[0], M, U);
         _joinOpen(makers[1], M, U);
-        _fund(makers[2], M, U);
-        _ship(makers[2], p, 380e18, U);
-        _register(makers[2], p);
+        _joinOpen(makers[2], M, U);
 
         vm.prank(makers[0]);
         mumb.transfer(makers[5], M - 600e18);
@@ -752,20 +774,23 @@ contract V206MakerVenueForkTest is RegistryBase {
         mumb.approve(AQUA, 450e18);
         _assertTightAt(makers[1], p, true, 450e18);
 
-        MakerVenue.Maker memory before_ = _assertTightAt(makers[2], p, true, 380e18);
-        _fill(makers[2], p, true, 100e6); // someone else uses 100 USDC of it
-        uint256 left = _virtual(makers[2], _hash(makers[2], p), address(mumb));
-        assertLt(left, 380e18);
-        MakerVenue.Maker memory after_ = _assertTightAt(makers[2], p, true, left);
-        assertLt(after_.capIn, before_.capIn, "the cap did not follow the virtual balance");
+        // The virtual balance cannot bind as an output limit (XYC's output stays below it), so it follows through the
+        // reserves: after a 1,000 USDC fill by someone else, x and y are Aqua's new balances and the cap is recomputed.
+        MakerVenue.Maker memory before_ = _assertFillsAtCap(makers[2], p, true);
+        _fill(makers[2], p, true, 1_000e6);
+        MakerVenue.Maker memory after_ = _assertFillsAtCap(makers[2], p, true);
+        assertEq(after_.x, before_.x + 1_000e6, "x follows the fill");
+        assertLt(after_.y, before_.y, "y follows the fill");
+        assertTrue(after_.capIn != before_.capIn, "the cap did not move with the reserves");
 
         // Cutting the other direction's token moves the other direction's cap, not this one.
+        MakerVenue.Maker memory mumbOut = _one(makers[0], true);
         vm.prank(makers[0]);
         IERC20(USDC).approve(AQUA, 0);
         MakerVenue.Maker memory oneIn = _one(makers[0], false);
         assertEq(uint8(oneIn.status), uint8(MakerVenue.Status.SKIP_UNDERFUNDED), "no USDC allowance: no USDC output");
         assertEq(oneIn.capIn, 0);
-        assertEq(_one(makers[0], true).capIn, _assertTightAt(makers[0], p, true, 600e18).capIn);
+        assertTrue(_eq(_one(makers[0], true), mumbOut), "the MUMB-out venue changed with the USDC allowance");
     }
 
     function test_V206_brokenMakerSkipped() public {
@@ -855,18 +880,7 @@ contract V206MakerVenueForkTest is RegistryBase {
             _join(makers[i], (i + 1) * 20_000e18, (i + 1) * 20_000e6, _open());
         }
         assertEq(hookV2.strategiesOf(idV2).length, 6);
-        // Padded to 8 entries, only MAX_STRATEGIES are read: 2 Aqua reads per maker, nothing more.
         MakerVenue.Entry[] memory six = _entries();
-        MakerVenue.Entry[] memory eight = new MakerVenue.Entry[](8);
-        for (uint256 i; i < 8; i++) {
-            eight[i] = six[i % 6];
-        }
-        vm.expectCall(AQUA, abi.encodeWithSelector(IAqua.rawBalances.selector), 12);
-        vm.expectCall(address(mumb), abi.encodeWithSelector(IERC20.allowance.selector), 6);
-        vm.expectCall(USDC, abi.encodeWithSelector(IERC20.allowance.selector), 0);
-        MakerVenue.Maker[] memory ms = _readEntries(eight, true);
-        assertEq(ms.length, 6);
-
         // Gas (logged, not asserted; V2-11 budgets): cold-ish, as the first read in a swap would be.
         uint256[3] memory counts = [uint256(1), 3, 6];
         for (uint256 c; c < 3; c++) {
@@ -884,6 +898,17 @@ contract V206MakerVenueForkTest is RegistryBase {
                 string.concat("gas, read of ", vm.toString(counts[c]), " maker(s), cold"), g0 - gasleft()
             );
         }
+
+        // Padded to 8 entries, only MAX_STRATEGIES are read: 2 Aqua reads and 1 allowance per maker, nothing more.
+        MakerVenue.Entry[] memory eight = new MakerVenue.Entry[](8);
+        for (uint256 i; i < 8; i++) {
+            eight[i] = six[i % 6];
+        }
+        vm.expectCall(AQUA, abi.encodeWithSelector(IAqua.rawBalances.selector), 12);
+        vm.expectCall(address(mumb), abi.encodeWithSelector(IERC20.allowance.selector), 6);
+        vm.expectCall(USDC, abi.encodeWithSelector(IERC20.allowance.selector), 0);
+        MakerVenue.Maker[] memory ms = _readEntries(eight, true);
+        assertEq(ms.length, 6);
     }
 
     function test_V206_constantsAndSharedMin() public view {
