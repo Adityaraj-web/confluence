@@ -153,13 +153,13 @@ contract ConfluenceHook is IHooks {
     /// @notice Smallest leg, in basis points of the swap's input; the hook refuses a plan with a smaller one.
     uint256 public constant MIN_LEG_BPS = 50;
     /// @notice Gas kept back for the rest of the swap after the plan and after each leg (D-20, re-measured in V2-07).
-    uint256 public constant GAS_RESERVE = 150_000;
+    uint256 public constant GAS_RESERVE = 170_000;
     /// @notice Least gas a leg is started with.
     uint256 public constant MIN_LEG_GAS = 160_000;
     /// @notice Most gas one leg's router call may use.
     uint256 public constant LEG_GAS_CAP = 640_000;
     /// @notice Most gas the splitter call may use.
-    uint256 public constant PLAN_GAS_CAP = 1_500_000;
+    uint256 public constant PLAN_GAS_CAP = 1_700_000;
     /// @notice Bytes of an encoded `Plan`; any other return length means pool-only.
     uint256 public constant PLAN_BYTES = 36 * 32;
     /// @notice Aqua, the same address on Ethereum and Unichain (D-28).
