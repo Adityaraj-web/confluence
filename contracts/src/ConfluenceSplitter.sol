@@ -147,7 +147,7 @@ contract ConfluenceSplitter {
         if (p.poolIn == amountIn) return p;
         bool better = !(pool.truncated && p.poolIn > p.walked);
         if (better) {
-            uint256 makersOut;
+            uint256 makersOut = 0;
             for (uint256 i; i < ms.length; i++) {
                 makersOut += p.amountOut[i];
             }
@@ -172,7 +172,7 @@ contract ConfluenceSplitter {
         returns (SplitMath.Venue[] memory v, uint256[] memory index)
     {
         uint256 len = Math.min(ms.length, MakerVenue.MAX_MAKERS);
-        uint256 k;
+        uint256 k = 0;
         for (uint256 i; i < len; i++) {
             if (live[i]) k++;
         }
@@ -196,7 +196,7 @@ contract ConfluenceSplitter {
         uint256 amount,
         Plan memory p
     ) private pure returns (bool dropped) {
-        uint256 kept;
+        uint256 kept = 0;
         for (uint256 j; j < idx.length; j++) {
             uint256 i = idx[j];
             if (_tooSmall(a[j + 1], ms[i].capMin, amount)) {
@@ -207,9 +207,9 @@ contract ConfluenceSplitter {
                 kept++;
             }
         }
-        for (uint256 r; r < MakerVenue.MAX_MAKERS && kept > MAX_LEGS; r++) {
+        for (uint256 r = 0; r < MakerVenue.MAX_MAKERS && kept > MAX_LEGS; r++) {
             uint256 worst = type(uint256).max;
-            uint256 at;
+            uint256 at = 0;
             for (uint256 j; j < idx.length; j++) {
                 if (live[idx[j]] && a[j + 1] < worst) (worst, at) = (a[j + 1], idx[j]);
             }
@@ -234,9 +234,9 @@ contract ConfluenceSplitter {
         Plan memory p
     ) private view {
         uint256 pmLeft = IERC20(tokenIn).balanceOf(address(pm));
-        uint256 sumIn;
+        uint256 sumIn = 0;
         for (uint256 r; r < MakerVenue.MAX_MAKERS; r++) {
-            uint256 best;
+            uint256 best = 0;
             uint256 at = type(uint256).max;
             for (uint256 j; j < idx.length; j++) {
                 uint256 i = idx[j];
@@ -264,7 +264,7 @@ contract ConfluenceSplitter {
     ///      rounded up. The pool's rate never rises along a swap, so the real tail is at most that.
     function _quotes(PoolVenue.Pool memory pool, uint256 amount, Plan memory p) private pure {
         uint256 len = pool.segments.length;
-        for (uint256 i; i < len && i < PoolVenue.MAX_TICK_RANGES; i++) {
+        for (uint256 i = 0; i < len && i < PoolVenue.MAX_TICK_RANGES; i++) {
             p.walked += pool.segments[i].capIn;
         }
         p.truncated = pool.truncated ? 1 : 0;

@@ -161,6 +161,8 @@ contract V207SplitTest is RegistryBase, V207Helpers {
     uint32 internal constant FEE_100 = 10_000_000;
     uint32 internal constant FEE_150 = 15_000_000;
     uint256 internal constant MAX_FUZZ_MAKERS = 6;
+    uint256 internal constant COVERAGE_WIDE_SEEDS = 24;
+    uint256 internal constant COVERAGE_SEEDS = 32;
     uint256 internal constant M3_TARGET = 991549823315669231761; // v1's hinted best (D-21)
 
     ConfluenceSplitter internal splitter;
@@ -357,19 +359,24 @@ contract V207SplitTest is RegistryBase, V207Helpers {
     function testFuzz_V207_neverWorseThanPoolOnly(uint256 seed, bool zfo, uint256 amountRaw, uint8 nRaw, bool gap)
         public
     {
-        _neverWorseCase(seed, zfo, amountRaw, nRaw, gap);
+        _neverWorseCase(seed, zfo, amountRaw, nRaw, gap, false);
     }
 
     /// @dev The fuzz body over fixed seeds, counting what it covered: makers filled, the not-better fallback, no
-    ///      makers, and the truncated shape. Each must occur.
+    ///      makers, and the truncated shape. Each must occur. Seeds 0-23 use the fuzz's own domain; seeds 24-31 use a
+    ///      coverage-only generator (thin makers with a 6% band on the truncated pool, the amount just past the walk),
+    ///      because the wide domain's makers are deep enough to keep the pool's share inside the walk, so it never
+    ///      reaches the not-better fallback (0 of 24 before this generator was added).
     function test_V207_neverWorseCoverage() public {
         uint256[5] memory seen; // filled, not better, none registered or none planned, truncated shape, pool-only
-        for (uint256 i; i < 24; i++) {
+        for (uint256 i; i < COVERAGE_SEEDS; i++) {
             uint256 s = vm.snapshotState();
             uint256 h = uint256(keccak256(abi.encode("coverage", i)));
-            uint8 cat = _neverWorseCase(h, h % 2 == 0, h >> 8, uint8(h >> 16), (h >> 24) % 3 == 0);
+            bool thin = i >= COVERAGE_WIDE_SEEDS;
+            bool gap = thin || (h >> 24) % 3 == 0;
+            uint8 cat = _neverWorseCase(h, h % 2 == 0, h >> 8, uint8(h >> 16), gap, thin);
             seen[cat]++;
-            if ((h >> 24) % 3 == 0) seen[3]++;
+            if (gap) seen[3]++;
             vm.revertToState(s);
         }
         console2.log("coverage: some leg filled        ", seen[0]);
@@ -482,7 +489,9 @@ contract V207SplitTest is RegistryBase, V207Helpers {
             } else {
                 q = _forgePastBand(p, ms, amount);
             }
-            vm.mockCall(address(splitter), abi.encodeWithSelector(ConfluenceSplitter.planExactIn.selector), abi.encode(q));
+            vm.mockCall(
+                address(splitter), abi.encodeWithSelector(ConfluenceSplitter.planExactIn.selector), abi.encode(q)
+            );
             Book memory b0 = _book(ms);
             Run memory r = _run(keyV2, true, amount, "");
             Book memory b1 = _book(ms);
@@ -746,7 +755,7 @@ contract V207SplitTest is RegistryBase, V207Helpers {
     }
 
     /// @dev A splitter that lies about the pool (D-35 accepts this gap: the hook does not re-read the pool). The
-    ///      forged plan overstates the split's pool output and understates pool-only, routes most of the input to a
+    ///      forged plan understates pool-only (so a worse split passes the comparison), routes most of the input to a
     ///      maker priced worse than the pool, and reports an inflated cap for another maker. What still holds: the
     ///      honest-cap leg fills exactly its planned amount, the over-cap leg is refused by the guard and settled
     ///      back, deltas net to zero, the hook holds nothing, and a router with the trader's minimum output (the
@@ -776,16 +785,19 @@ contract V207SplitTest is RegistryBase, V207Helpers {
         q.amountOut[2] = _cpOut(x2, y2, FEE_005, overCap);
         (q.capMin[2], q.capIn[2], q.status[2]) = (0, overCap, LegStatus.FILLED);
         q.poolIn = amount - q.amountIn[1] - q.amountIn[2];
-        (q.poolOut, q.poolOnlyOut, q.tail, q.truncated) = (type(uint128).max, 0, 0, 0);
+        // The lie: pool-only understated (a pool quote above int128 max would be refused by the hook's bounds).
+        (q.poolOnlyOut, q.tail, q.truncated) = (0, 0, 0);
 
         // Premise: the guard itself refuses the over-cap leg.
         {
             uint256 s0 = vm.snapshotState();
+            ISwapVM.Order memory o2 = _order(keyV2, ms[2]); // built first: `_order` makes an external call
+            bytes memory td2 = _td(q.amountOut[2]);
             deal(USDC, address(hookV2), overCap);
             vm.startPrank(address(hookV2));
             IERC20(USDC).approve(ROUTER, overCap);
             vm.expectPartialRevert(BandExceeded.selector);
-            ISwapVM(ROUTER).swap(_order(keyV2, ms[2]), USDC, address(mumb), overCap, _td(q.amountOut[2]));
+            ISwapVM(ROUTER).swap(o2, USDC, address(mumb), overCap, td2);
             vm.stopPrank();
             vm.revertToState(s0);
         }
@@ -1226,8 +1238,9 @@ contract V207SplitTest is RegistryBase, V207Helpers {
     // Helpers: fuzz body, gas
     // =====================================================================================================
 
-    /// @dev Returns 0 if a leg filled, 1 if the plan fell back as not better, 2 if nothing was planned.
-    function _neverWorseCase(uint256 seed, bool zfo, uint256 amountRaw, uint8 nRaw, bool gap)
+    /// @dev Returns 0 if a leg filled, 1 if the plan fell back as not better, 2 if nothing was planned. `thin` is the
+    ///      coverage-only generator: 1-6 makers 200-3,000 USDC deep with a 6% band, amount 1-300 units past the walk.
+    function _neverWorseCase(uint256 seed, bool zfo, uint256 amountRaw, uint8 nRaw, bool gap, bool thin)
         internal
         returns (uint8 cat)
     {
@@ -1235,15 +1248,18 @@ contract V207SplitTest is RegistryBase, V207Helpers {
         _initExact(k);
         int24 snap;
         (snap,,) = hookV2.anchorOf(k.toId());
-        uint256 n = bound(nRaw, 0, MAX_FUZZ_MAKERS);
+        uint256 n = bound(nRaw, thin ? 1 : 0, MAX_FUZZ_MAKERS);
         uint32[5] memory fees = [uint32(500_000), 1_000_000, 3_000_000, 5_000_000, 10_000_000];
         for (uint256 i; i < n; i++) {
             uint256 h = uint256(keccak256(abi.encode(seed, i)));
-            uint256 usdcRaw = bound(h, 1_000, 200_000) * USDC_1;
+            uint256 usdcRaw = (thin ? bound(h, 200, 3_000) : bound(h, 1_000, 200_000)) * USDC_1;
             int24 off = int24(int256(bound(h >> 64, 0, 300))) - 150;
-            _joinM(k, makers[i], _mumbAt(usdcRaw, snap + off), usdcRaw, _pf(fees[(h >> 128) % 5]));
+            StrategyTemplate.Params memory p = _pf(fees[(h >> 128) % 5]);
+            if (thin) p.bandBps = 600;
+            _joinM(k, makers[i], _mumbAt(usdcRaw, snap + off), usdcRaw, p);
         }
-        uint256 amount = bound(amountRaw, 1, 3_000 * (zfo ? USDC_1 : MUMB_1));
+        uint256 unit = zfo ? USDC_1 : MUMB_1;
+        uint256 amount = thin ? _walked(k, zfo) + bound(amountRaw, 1, 300) * unit : bound(amountRaw, 1, 3_000 * unit);
         Run memory po = _poolOnly(k, zfo, amount);
         Run memory r = _run(k, zfo, amount, "");
         assertGe(r.got, po.got, "never worse than the real pool-only swap");
