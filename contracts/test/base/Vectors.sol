@@ -96,6 +96,19 @@ library Vectors {
         uint256 hintTotal;
     }
 
+    /// @dev V2-07: the v1 pool and three makers (`threeMakers` in v1_demo.json). Index 0 of `alloc` and `perVenue`
+    ///      is the pool; `makers[j]` is venue j + 1, priced from the maker's side (x = input token).
+    struct ThreeMakers {
+        string name;
+        uint256 amount;
+        bool zeroForOne;
+        uint256 poolOnlyOut;
+        VenueV[] makers;
+        uint256[] alloc;
+        uint256[] perVenue;
+        uint256 totalInt;
+    }
+
     // ------------------------------------------------------------------ files
 
     /// @notice The raw JSON of `file` (a name from this library).
@@ -211,6 +224,27 @@ library Vectors {
             c.hintAquaLeg = vm.parseJsonUint(json, string.concat(h, ".aquaLeg"));
             c.hintPoolLeg = vm.parseJsonUint(json, string.concat(h, ".poolLeg"));
             c.hintTotal = vm.parseJsonUint(json, string.concat(h, ".total"));
+        }
+    }
+
+    /// @notice Number of `threeMakers` cases in v1_demo.json (V2-07).
+    function threeMakersCount(string memory json) internal view returns (uint256) {
+        return _arrayLength(json, ".threeMakers");
+    }
+
+    function threeMakers(string memory json, uint256 i) internal view returns (ThreeMakers memory c) {
+        string memory p = string.concat(".threeMakers[", vm.toString(i), "]");
+        c.name = vm.parseJsonString(json, string.concat(p, ".name"));
+        c.amount = vm.parseJsonUint(json, string.concat(p, ".amount"));
+        c.zeroForOne = vm.parseJsonBool(json, string.concat(p, ".zeroForOne"));
+        c.poolOnlyOut = vm.parseJsonUint(json, string.concat(p, ".poolOnlyOut"));
+        c.alloc = vm.parseJsonUintArray(json, string.concat(p, ".alloc"));
+        c.perVenue = vm.parseJsonUintArray(json, string.concat(p, ".perVenue"));
+        c.totalInt = vm.parseJsonUint(json, string.concat(p, ".totalInt"));
+        uint256 n = _arrayLength(json, string.concat(p, ".makers"));
+        c.makers = new VenueV[](n);
+        for (uint256 k; k < n; k++) {
+            c.makers[k] = venue(json, string.concat(p, ".makers[", vm.toString(k), "]"));
         }
     }
 

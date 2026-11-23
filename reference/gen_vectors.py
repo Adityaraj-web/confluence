@@ -273,7 +273,56 @@ def v1_demo_file():
     aqua_leg = vn.cp_out_int(priya_usdc_in, hint)
     pool_leg = vn.pool_swap_exact_in(state, 1_000 * 10**6 - hint, c0).amount_out
     cases[0]["v1Hinted"] = {"hint": s(hint), "aquaLeg": s(aqua_leg), "poolLeg": s(pool_leg), "total": s(aqua_leg + pool_leg)}
-    return dump("v1_demo", "The v1 demo pool (F04) and Priya's strategy (F05). USDC is currency0.", cases)
+    text = dump("v1_demo", "The v1 demo pool (F04) and Priya's strategy (F05). USDC is currency0.", cases)
+    # V2-07: a top-level array beside `cases`, so the cases above (and `count`) stay byte-identical.
+    doc = json.loads(text)
+    doc["threeMakers"] = three_makers_cases(c0)
+    return json.dumps(doc, indent=2, sort_keys=True) + "\n"
+
+
+# Three makers on the v1 pool (V2-07): (name, depth of each token in whole units, fee). Different fees and depths,
+# so the order of their starting rates matters; every share is above 10% for both cases.
+THREE_MAKERS = (("priya", 100_000, 3_000_000), ("maker2", 20_000, 500_000), ("maker3", 60_000, 5_000_000))
+
+
+def three_makers_cases(usdc_is_currency0):
+    """The v1 pool (its integer segment, capped at `capIn`) and three makers, 1,000 in each direction. Allocations
+    come from the integer-mode solver, so they are what SplitMath gives on chain; legs are priced exactly (the
+    pool's leg by the v4 walk, each maker's by SwapVM's rounding)."""
+    out = []
+    for name, amount, zfo, usdc_in in (
+        ("usdc-to-mumb-1000", 1_000 * 10**6, usdc_is_currency0, True),
+        ("mumb-to-usdc-1000", 1_000 * 10**18, not usdc_is_currency0, False),
+    ):
+        state = vn.v1_demo_pool(usdc_is_currency0)
+        seg = vn.pool_segments(state, zfo, vn.MAX_TICK_RANGES, integer=True)[0]
+        pool_v = Venue(seg.x, seg.y, seg.fee_e9, seg.cap_in)
+        makers = [
+            Venue(d * 10**6, d * 10**18, f, None) if usdc_in else Venue(d * 10**18, d * 10**6, f, None)
+            for _, d, f in THREE_MAKERS
+        ]
+        alloc = wf.solve_exact_in_int([pool_v] + makers, amount)
+        assert sum(alloc) == amount and alloc[0] < seg.cap_in, name
+        for a in alloc[1:]:
+            assert a * 10_000 >= amount * 50, (name, a)  # MIN_LEG_BPS
+        pool_leg = vn.pool_swap_exact_in(state, alloc[0], zfo).amount_out
+        legs = [vn.cp_out_int(m, a) for m, a in zip(makers, alloc[1:])]
+        segs_real = vn.pool_segments(state, zfo, vn.MAX_TICK_RANGES)
+        real = wf.solve_pool_exact_in(segs_real, makers, amount)
+        out.append(
+            {
+                "name": name,
+                "amount": s(amount),
+                "zeroForOne": zfo,
+                "poolOnlyOut": s(vn.pool_swap_exact_in(state, amount, zfo).amount_out),
+                "makers": [dict(venue_json(m), name=n) for (n, _, _), m in zip(THREE_MAKERS, makers)],
+                "alloc": [s(a) for a in alloc],
+                "perVenue": [s(pool_leg)] + [s(b) for b in legs],
+                "totalInt": s(pool_leg + sum(legs)),
+                "totalReal": real_str(real.total_out),
+            }
+        )
+    return out
 
 
 # --------------------------------------------------------------------------- entry points

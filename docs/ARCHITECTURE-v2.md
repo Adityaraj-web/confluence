@@ -9,6 +9,7 @@ v1 (`docs/ARCHITECTURE.md`, tag `v1-hackathon`, frozen in `contracts/src/v1/` by
 | Contract | Kind | Job | Spec |
 | --- | --- | --- | --- |
 | `ConfluenceHook` | v4 hook, immutable, no owner, written fresh (v1 lives in `src/v1/`) | `beforeSwap`: update the anchor, build venues, solve, run maker legs, return the delta. Stores the anchor and the maker registry | V2-03, V2-05, V2-07, V2-08 |
+| `ConfluenceSplitter` | View contract, stateless, immutable, passed to the hook's constructor | `planExactIn`: reads the pool and the makers at the hook's post-update anchor, solves, selects legs and quotes them. The hook calls it with a gas cap and checks the plan itself (D-35) | V2-07 |
 | `SplitMath` | Library, pure | Water-filling across N venues, exact input and exact output, a cap per venue | V2-01 |
 | `PoolVenue` | Library, view | Reads `slot0`, liquidity, fees and initialized ticks; returns up to 8 tick-range segments | V2-02 |
 | `MakerVenue` | Library, view | Reads Aqua virtual balances, the maker's wallet balance and allowance; returns reserves and caps | V2-06 |
@@ -18,7 +19,7 @@ v1 (`docs/ARCHITECTURE.md`, tag `v1-hackathon`, frozen in `contracts/src/v1/` by
 | `ConfluenceLens` | View contract | The hook's maths as a full breakdown, for apps, solvers and indexers | V2-09 |
 | PoolManager, AquaSwapVMRouter v1.0.2, Aqua | Canonical | Used as deployed | — |
 
-Libraries are `internal` unless the hook nears the 24 KB limit; V2-07 measures and decides (DECISIONS entry).
+Libraries are `internal`. The venue reads and the solve do not fit in the hook with the legs (34,957 B measured), so they run in `ConfluenceSplitter`, a separate immutable contract whose address is fixed in the hook's constructor; verifying the hook includes verifying the splitter (D-35).
 
 Taker access: 1inch's own dApp adds `_onlyTxOriginTokenBalanceNonZero(KycNFT)` to every position, so only KYB-verified resolvers fill those. CONFLUENCE strategies are built by `StrategyTemplate` without that opcode, as in v1, and BandGuardV2 can restrict the taker to the hook instead. v1 proved an ungated program fills through mainnet's router at FORK_BLOCK 26349400. 1inch's docs describe the deployed router as default-deny, so V2-05's first test re-checks this on the target chain [VERIFY].
 
@@ -92,7 +93,10 @@ BandGuardV2 passes a fill only if:
 | `bandBps` | default 200 | maker, strategy bytes | as v1 |
 | `driftTicks` | default 300 | maker, strategy bytes | largest snap–EMA gap the maker accepts |
 | `exclusive` | default true | maker, strategy bytes | only the hook may take |
-| `GAS_RESERVE`, `LEG_GAS_CAP` | 150,000 / 640,000 | hook constants | from v1 D-20, re-measured |
+| `GAS_RESERVE`, `LEG_GAS_CAP` | 170,000 / 640,000 | hook constants | D-20's sweep re-run on the split (V2-07, D-35): need about 120,000 |
+| `MIN_LEG_GAS` | 160,000 | hook constant | from v1 D-20 (a router leg about 152k) |
+| `PLAN_GAS_CAP` | 1,700,000 | hook constant | 2x the worst splitter call measured (838,822: 6 makers, 8 segments) |
+| `MAX_SOLVES` | 2 | splitter constant | one re-solve after dropping legs (D-35) |
 
 ## 6. Failure model
 
@@ -106,11 +110,13 @@ Aqua can never make a swap fail. Every failure degrades to the pool.
 | Drift limit broken | dropped | same |
 | Pool walk reaches 8 ranges | keep that allocation | valid, slightly less optimal |
 | Too little gas left | skip all legs | pool-only |
+| Splitter call fails, runs out of its gas cap, or returns a plan that fails a hook check | skip all legs (`SKIP_PLAN`) | pool-only |
+| Split would not beat pool-only (quoted), or the pool's share would pass a truncated walk | skip all legs (`SKIP_NOT_BETTER`) | pool-only |
 | Maths outside the overflow envelope, or a leg rounds to zero | skip that leg | pool fills it |
 
 ## 7. Events
 
-`ConfluenceSwap(poolId, zeroForOne, exactIn, amountSpecified, snapTick, emaTick, sqrtPriceX96, liquidity, swapFee, Leg[] legs)` with `Leg { strategyHash, amountIn, amountOut, status }`. Status codes: FILLED, SKIP_REVERT, SKIP_BAND, SKIP_DRIFT, SKIP_UNDERFUNDED, SKIP_MIN_LEG, SKIP_GAS, SKIP_MATH. Enough to recompute analytics without an archive node. `MakerRegistered`, `MakerUnregistered`, `MakerEvicted(reason)`.
+`ConfluenceSwap(poolId, zeroForOne, exactIn, amountSpecified, snapTick, emaTick, sqrtPriceX96, liquidity, swapFee, Leg[] legs)` with `Leg { strategyHash, amountIn, amountOut, status }`. Status codes (0-9): FILLED, SKIP_REVERT, SKIP_BAND, SKIP_DRIFT, SKIP_UNDERFUNDED, SKIP_MIN_LEG, SKIP_GAS, SKIP_MATH, SKIP_NOT_BETTER, SKIP_PLAN (the last two added by V2-07, D-35). One `Leg` per registered slot read (up to `MAX_STRATEGIES`); exact output emits no `ConfluenceSwap` until V2-08. Enough to recompute analytics without an archive node. `MakerRegistered`, `MakerUnregistered`, `MakerEvicted(reason)`.
 
 ## 8. Deployment shape (Phase 2 deploys; Phase 1 keeps it possible)
 

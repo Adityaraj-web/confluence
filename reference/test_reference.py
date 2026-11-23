@@ -217,6 +217,25 @@ class V1Numbers(unittest.TestCase):
         self.assertEqual((total / Decimal(10**18)).quantize(Decimal("0.000001")), Decimal("991.549861"))
         self.assertGreater(total, Decimal(V1_HINTED_BEST_WEI))
 
+    def test_three_makers_vector(self):
+        """V2-07: the integer allocations agree with the real-valued pool solver to 1e-9 of the amount, every maker
+        gets a share, the split beats pool-only, and the lowest-fee maker is the one that leaves the pool's rate
+        last (its share per unit of depth is the largest)."""
+        for c in gen_vectors.three_makers_cases(gen_vectors.V1_USDC_IS_CURRENCY0):
+            amount = int(c["amount"])
+            makers = [venues.Venue(int(m["x"]), int(m["y"]), m["feeE9"], None) for m in c["makers"]]
+            state = venues.v1_demo_pool(gen_vectors.V1_USDC_IS_CURRENCY0)
+            segs = venues.pool_segments(state, c["zeroForOne"], venues.MAX_TICK_RANGES)
+            real = waterfill.solve_pool_exact_in(segs, makers, amount)
+            alloc = [int(a) for a in c["alloc"]]
+            self.assertEqual(sum(alloc), amount, c["name"])
+            for got, want in zip(alloc[1:], real.makers):
+                self.assertLessEqual(abs(Decimal(got) - want), Decimal(amount) / Decimal(10**9), c["name"])
+                self.assertGreater(got, 0, c["name"])
+            self.assertGreater(int(c["totalInt"]), int(c["poolOnlyOut"]), c["name"])
+            per_depth = [a / m.x for a, m in zip(alloc[1:], makers)]
+            self.assertEqual(max(range(3), key=lambda i: per_depth[i]), 1, c["name"])
+
 
 class TickMath(unittest.TestCase):
     def test_known_values(self):
