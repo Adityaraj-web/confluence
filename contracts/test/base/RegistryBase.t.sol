@@ -32,7 +32,7 @@ abstract contract RegistryBase is PoolBase, StrategyLib {
 
     constructor() StrategyLib(AQUA) {}
 
-    function setUp() public override {
+    function setUp() public virtual override {
         super.setUp();
         // The expected-depth helper below puts USDC on the currency0 side (D-28's premise, tested by V200).
         require(usdcIsCurrency0, "premise: USDC is currency0");
