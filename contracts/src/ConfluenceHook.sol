@@ -16,6 +16,7 @@ import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
 import {BandGuardV2} from "./BandGuardV2.sol";
+import {ConfluenceSplitter, LegStatus, Plan} from "./ConfluenceSplitter.sol";
 import {AnchorLib} from "./libraries/AnchorLib.sol";
 import {MakerVenue} from "./libraries/MakerVenue.sol";
 import {StrategyTemplate} from "./libraries/StrategyTemplate.sol";
@@ -23,7 +24,8 @@ import {StrategyTemplate} from "./libraries/StrategyTemplate.sol";
 /// @title ConfluenceHook (v2)
 /// @notice A Uniswap v4 hook that keeps a block-start price anchor per pool: the `slot0` tick at the block's first
 /// swap, and a time-weighted EMA of those snapshots (ARCHITECTURE-v2 section 4). Immutable, ownerless, no admin.
-/// V2-03: every swap is pool-only (zero delta, no LP-fee override); maker logic arrives in V2-05 to V2-07.
+/// V2-07: every exact-input swap is split between the pool and the registered makers with no hint; exact output is
+/// pool-only until V2-08.
 /// @dev Implements `IHooks` directly (D-17). Callbacks other than `beforeSwap` revert; the PoolManager never calls
 /// them because the address flags are off. This hook never calls `PoolManager.swap` itself: the PoolManager skips the
 /// hook for a swap whose caller is the hook (`Hooks.sol:252`), which would bypass the anchor update (D-31).
@@ -47,6 +49,8 @@ contract ConfluenceHook is IHooks {
     error NativeCurrencyUnsupported();
     /// @dev A fee above `MAX_LP_FEE` that is not the dynamic-fee flag.
     error InvalidPoolFee(uint24 fee);
+    /// @dev The constructor's splitter is the zero address or has no code.
+    error InvalidSplitter();
     /// @dev A tick spacing outside v4's [1, 32767].
     error InvalidTickSpacing(int24 tickSpacing);
     /// @dev The pool has never had a swap: no recorded snapshot to price depth with (D-33).
@@ -91,6 +95,31 @@ contract ConfluenceHook is IHooks {
     /// @notice A slot was emptied by someone other than its maker.
     event MakerEvicted(PoolId indexed poolId, address indexed maker, bytes32 strategyHash, EvictReason reason);
 
+    /// @notice One registry slot's part in a swap: its leg's input and output (zero when it has none) and a
+    /// `LegStatus` code.
+    struct Leg {
+        bytes32 strategyHash;
+        uint256 amountIn;
+        uint256 amountOut;
+        uint8 status;
+    }
+
+    /// @notice One exact-input swap on a pool with registered makers or none (ARCHITECTURE-v2 section 7). `legs` has one
+    /// entry per registry slot, in slot order. `sqrtPriceX96`, `liquidity` and `swapFee` are the pool's before the
+    /// swap; `swapFee` is v4's combined fee for the direction, in pips.
+    event ConfluenceSwap(
+        PoolId indexed poolId,
+        bool zeroForOne,
+        bool exactIn,
+        int256 amountSpecified,
+        int24 snapTick,
+        int24 emaTick,
+        uint160 sqrtPriceX96,
+        uint128 liquidity,
+        uint24 swapFee,
+        Leg[] legs
+    );
+
     /// @notice The anchor of `poolId` was recorded: the first swap of a new block. `emaTickX` is tick x 2^16.
     event AnchorUpdated(PoolId indexed poolId, int24 snapTick, int56 emaTickX, uint40 timestamp);
 
@@ -98,11 +127,27 @@ contract ConfluenceHook is IHooks {
     IPoolManager public immutable poolManager;
     /// @notice The guard every registered strategy ends with. Deployed by this hook's constructor.
     BandGuardV2 public immutable bandGuard;
+    /// @notice The contract that plans each split (D-35). Immutable; verifying this hook includes verifying it.
+    ConfluenceSplitter public immutable splitter;
     /// @notice Half-life of the EMA, in seconds (V2-11 may change it with a DECISIONS entry).
     uint256 public constant EMA_HALF_LIFE = 60;
 
     /// @notice Most strategies registered per pool (bounds every registry loop).
     uint256 public constant MAX_STRATEGIES = 6;
+    /// @notice Most maker legs per swap; the hook refuses a plan with more.
+    uint256 public constant MAX_LEGS = 3;
+    /// @notice Smallest leg, in basis points of the swap's input; the hook refuses a plan with a smaller one.
+    uint256 public constant MIN_LEG_BPS = 50;
+    /// @notice Gas kept back for the rest of the swap after the plan and after each leg (D-20, re-measured in V2-07).
+    uint256 public constant GAS_RESERVE = 150_000;
+    /// @notice Least gas a leg is started with.
+    uint256 public constant MIN_LEG_GAS = 160_000;
+    /// @notice Most gas one leg's router call may use.
+    uint256 public constant LEG_GAS_CAP = 640_000;
+    /// @notice Most gas the splitter call may use.
+    uint256 public constant PLAN_GAS_CAP = 1_500_000;
+    /// @notice Bytes of an encoded `Plan`; any other return length means pool-only.
+    uint256 public constant PLAN_BYTES = 36 * 32;
     /// @notice Aqua, the same address on Ethereum and Unichain (D-28).
     address public constant AQUA = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
     /// @notice The canonical AquaSwapVMRouter v1.0.2, the same address on Ethereum and Unichain (D-28).
@@ -119,9 +164,13 @@ contract ConfluenceHook is IHooks {
     mapping(PoolId => Slot[]) internal _slots;
 
     /// @param _poolManager The v4 PoolManager.
-    /// @dev Reverts unless the deployed address carries exactly the flags in `getHookPermissions`.
-    constructor(IPoolManager _poolManager) {
+    /// @param _splitter The deployed `ConfluenceSplitter` (D-35).
+    /// @dev Reverts unless the deployed address carries exactly the flags in `getHookPermissions`, and
+    /// `InvalidSplitter` for a splitter with no code.
+    constructor(IPoolManager _poolManager, ConfluenceSplitter _splitter) {
+        if (address(_splitter).code.length == 0) revert InvalidSplitter();
         poolManager = _poolManager;
+        splitter = _splitter;
         bandGuard = new BandGuardV2();
         Hooks.validateHookPermissions(IHooks(address(this)), getHookPermissions());
     }
