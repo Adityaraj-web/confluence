@@ -218,15 +218,17 @@ library MakerVenue {
     }
 
     /// @notice The live makers as `SplitMath` venues (cap = `capIn`, exact-input units) and each venue's index in `ms`.
+    ///         Only the first `MAX_MAKERS` entries are looked at (`read` never returns more).
     function toVenues(Maker[] memory ms) internal pure returns (SplitMath.Venue[] memory v, uint256[] memory index) {
+        uint256 len = Math.min(ms.length, MAX_MAKERS);
         uint256 n = 0;
-        for (uint256 i = 0; i < ms.length; i++) {
+        for (uint256 i = 0; i < len; i++) {
             if (ms[i].status == Status.OK) n++;
         }
         v = new SplitMath.Venue[](n);
         index = new uint256[](n);
         uint256 k = 0;
-        for (uint256 i = 0; i < ms.length; i++) {
+        for (uint256 i = 0; i < len; i++) {
             if (ms[i].status != Status.OK) continue;
             v[k] = SplitMath.Venue({x: ms[i].x, y: ms[i].y, feeE9: ms[i].feeE9, cap: ms[i].capIn});
             index[k] = i;

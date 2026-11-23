@@ -24,6 +24,10 @@ import {RegistryBase} from "../base/RegistryBase.t.sol";
 import {TakerHelper} from "../base/TakerHelper.sol";
 import {MockAnchorHook} from "../unit/V204BandGuard.t.sol";
 
+/// @dev Tick of 1 USDC (6 decimals) = 1 MUMB (18 decimals) in the fork pool: price 1e12 currency1 per currency0.
+///      `test_V206_regimeTickIsThePoolsTick` asserts it equals the fork pool's snapshot tick.
+int24 constant TICK_6_18 = 276324;
+
 /// @dev External wrappers around the internal library, so the fork tests call it as a separate contract would.
 contract MakerVenueHarness {
     function read(
@@ -79,9 +83,6 @@ contract V206MakerVenueMathTest is Test {
     uint32 internal constant FEE = 3_000_000; // 0.30%
     int256 internal constant UNIT = 2 ** 16;
     uint256 internal constant MAX_AMOUNT = type(uint128).max;
-    /// @dev tick of 1 USDC (6 decimals) = 1 MUMB (18 decimals) in the fork pool: price 1e12 currency1 per currency0.
-    int24 internal constant TICK_6_18 = 276324;
-
     BandGuardV2 internal guard;
     MockAnchorHook internal mock;
     PoolKey internal key;
@@ -127,12 +128,19 @@ contract V206MakerVenueMathTest is Test {
         return int56(int256(snap) * UNIT);
     }
 
+    /// @dev The guard's reference price and scale for a snapshot, written apart from the library: X192 below
+    ///      sqrt price 2^127, else X96.
+    function _scale(int24 snap) internal pure returns (uint256 ref, uint256 shift) {
+        uint256 s = TickMath.getSqrtPriceAtTick(snap);
+        if (s < 2 ** 127) return (s * s, 192);
+        return (FullMath.mulDiv(s, s, 2 ** 96), 96);
+    }
+
     /// @dev Reserves of a maker priced exactly at the snapshot: x of the input token, y = x * price (zeroIn) or
     ///      x / price (token1 in).
     function _reserves(int24 snap, bool zeroIn, uint256 x) internal pure returns (uint256 y) {
-        uint256 s = TickMath.getSqrtPriceAtTick(snap);
-        uint256 ref = s * s; // X192; the ticks used here sit below sqrt 2^127
-        y = zeroIn ? FullMath.mulDiv(x, ref, 2 ** 192) : FullMath.mulDiv(x, 2 ** 192, ref);
+        (uint256 ref, uint256 shift) = _scale(snap);
+        y = zeroIn ? FullMath.mulDiv(x, ref, 2 ** shift) : FullMath.mulDiv(x, 2 ** shift, ref);
     }
 
     function _maker(uint256 x, uint256 y, uint32 fee, uint256 capIn, uint256 capMin)
@@ -188,7 +196,7 @@ contract V206MakerVenueMathTest is Test {
     /// forge-config: default.fuzz.runs = 2000
     function testFuzz_V206_capInversionIsTight(uint256 xSeed, uint256 ySeed, uint256 oSeed, uint32 feeSeed)
         public
-        view
+        pure
     {
         // bandBps 10000 with the token0-in direction has no lower band edge (ref - lim = 0), so the output cap is the
         // only binding one; the maker is priced at the snapshot (tick 0, ref 1.0) so the start check passes.
@@ -212,12 +220,11 @@ contract V206MakerVenueMathTest is Test {
     /// @dev The oracle for the true (real-number) band edge in net input, written apart from the library: the net input
     ///      at which the curve's price reaches the band's edge. 0 when there is no edge (token0 in, band 100%).
     function _trueEdgeNet(uint256 x, uint256 y, int24 snap, bool zeroIn, uint16 bps) internal pure returns (uint256) {
-        uint256 s = TickMath.getSqrtPriceAtTick(snap);
-        uint256 ref = s * s;
+        (uint256 ref, uint256 shift) = _scale(snap);
         uint256 lim = FullMath.mulDiv(ref, bps, 10_000);
         uint256 w = zeroIn
-            ? (ref - lim == 0 ? 0 : FullMath.mulDiv(y, 2 ** 192, ref - lim))
-            : FullMath.mulDiv(y, ref + lim + 1, 2 ** 192);
+            ? (ref - lim == 0 ? 0 : FullMath.mulDiv(y, 2 ** shift, ref - lim))
+            : FullMath.mulDiv(y, ref + lim + 1, 2 ** shift);
         return w > x ? w - x : 0;
     }
 
@@ -263,7 +270,10 @@ contract V206MakerVenueMathTest is Test {
     }
 
     function _regime(string memory name, int24 snap, bool zeroIn, uint256 x, uint16 bps) internal {
-        uint256 y = _reserves(snap, zeroIn, x);
+        _regimeXY(name, snap, zeroIn, x, _reserves(snap, zeroIn, x), bps);
+    }
+
+    function _regimeXY(string memory name, int24 snap, bool zeroIn, uint256 x, uint256 y, uint16 bps) internal {
         (MakerVenue.Status st, uint256 capMin, uint256 capIn,) =
             MakerVenue.caps(x, y, FEE, y, type(uint256).max, snap, zeroIn, bps);
         assertEq(uint8(st), uint8(MakerVenue.Status.OK), string.concat(name, ": status"));
@@ -289,17 +299,84 @@ contract V206MakerVenueMathTest is Test {
     }
 
     function test_V206_bandCapPassesRegime6to18() public {
-        // 100,000 USDC (6 decimals) against 100,000 MUMB (18 decimals) at the fork pool's tick.
+        // 100,000 USDC (6 decimals) against 100,000 MUMB (18 decimals) at the fork pool's tick; token0 in is
+        // USDC -> MUMB (6 -> 18), token1 in is MUMB -> USDC (18 -> 6).
         _regimeSet("USDC<->MUMB", TICK_6_18, 100_000e6, 100_000e18);
     }
 
-    function test_V206_bandCapPassesRegime18to6() public {
-        // The same pair seen from the other side: a thin 18-decimal input against a 6-decimal output.
-        _regimeSet("MUMB-heavy", TICK_6_18, 1_000e6, 1_000e18);
+    function test_V206_bandCapPassesRegimeThinMakerBothDirections() public {
+        // A thin maker (1,000 USDC against 1,000 MUMB) on the same pair, both directions: 6 -> 18 and 18 -> 6.
+        _regimeSet("thin USDC<->MUMB", TICK_6_18, 1_000e6, 1_000e18);
     }
 
     function test_V206_bandCapPassesRegime18x18AtTick0() public {
         _regimeSet("18/18 tick 0", 0, 100_000e18, 100_000e18);
+    }
+
+    /// @dev Reserves for `snap` with the larger side 1e36 (inside SplitMath's 2^128 envelope at any tick) and the other
+    ///      side priced at the snapshot: token0 in has x of token0 and y of token1.
+    function _pricedPair(int24 snap, bool zeroIn) internal pure returns (uint256 x, uint256 y) {
+        (uint256 ref, uint256 shift) = _scale(snap);
+        uint256 big = 1e36;
+        // price = ref / 2^shift (token1 per token0); above 1 the token1 side is the larger one.
+        bool token1Larger = snap >= 0;
+        if (zeroIn) {
+            if (token1Larger) {
+                y = big;
+                x = FullMath.mulDiv(y, 2 ** shift, ref);
+            } else {
+                x = big;
+                y = FullMath.mulDiv(x, ref, 2 ** shift);
+            }
+        } else {
+            if (token1Larger) {
+                x = big;
+                y = FullMath.mulDiv(x, 2 ** shift, ref);
+            } else {
+                y = big;
+                x = FullMath.mulDiv(y, ref, 2 ** shift);
+            }
+        }
+    }
+
+    /// @dev Ticks where the guard switches to the X96 scale (sqrt price >= 2^127, tick above about 429,800) and the
+    ///      mirror ticks below zero, where sqrt price is tiny and the X192 scale holds; both directions, band 200 bps.
+    ///      Every fill in [capMin, cap] passes the real guard (the same density checks as the other regimes).
+    function test_V206_bandCapPassesRegimeX96AndExtremeTicks() public {
+        int24[4] memory ticks = [int24(430_000), 600_000, -430_000, -600_000];
+        for (uint256 i; i < 4; i++) {
+            int24 snap = ticks[i];
+            (, uint256 shift) = _scale(snap);
+            assertEq(shift, snap > 0 ? 96 : 192, "the scale the guard uses at this tick");
+            for (uint256 d; d < 2; d++) {
+                bool zeroIn = d == 0;
+                (uint256 x, uint256 y) = _pricedPair(snap, zeroIn);
+                string memory name =
+                    string.concat("tick ", vm.toString(int256(snap)), zeroIn ? " token0 in" : " token1 in");
+                _regimeXY(name, snap, zeroIn, x, y, 200);
+            }
+        }
+    }
+
+    function test_V206_toVenuesReadsOnlyMaxMakers() public pure {
+        MakerVenue.Maker[] memory ms = new MakerVenue.Maker[](8);
+        for (uint256 i; i < 8; i++) {
+            ms[i].status = MakerVenue.Status.OK;
+            ms[i].x = 1000 + i;
+            ms[i].y = 2000 + i;
+            ms[i].capIn = 10 + i;
+        }
+        ms[1].status = MakerVenue.Status.SKIP_BAND; // a dead maker inside the first six is left out
+        (SplitMath.Venue[] memory v, uint256[] memory index) = MakerVenue.toVenues(ms);
+        assertEq(MakerVenue.MAX_MAKERS, 6);
+        assertEq(v.length, 5, "5 live makers among the first 6; entries 6 and 7 are not read");
+        assertEq(index.length, 5);
+        uint256[5] memory want = [uint256(0), 2, 3, 4, 5];
+        for (uint256 i; i < 5; i++) {
+            assertEq(index[i], want[i], "index maps back to the entry");
+            assertEq(v[i].x, 1000 + want[i]);
+            assertEq(v[i].cap, 10 + want[i]);
+        }
     }
 
     /// forge-config: default.fuzz.runs = 5000
@@ -881,7 +958,8 @@ contract V206MakerVenueForkTest is RegistryBase {
         }
         assertEq(hookV2.strategiesOf(idV2).length, 6);
         MakerVenue.Entry[] memory six = _entries();
-        // Gas (logged, not asserted; V2-11 budgets): cold-ish, as the first read in a swap would be.
+        // Gas (logged, not asserted; V2-11 budgets). Approximate: includes the harness call and the `anchorOfX` call, and
+        // `vm.cool` cools only Aqua, USDC, MUMB and the PoolManager (not the makers, harness or hook). V2-11 re-measures.
         uint256[3] memory counts = [uint256(1), 3, 6];
         for (uint256 c; c < 3; c++) {
             MakerVenue.Entry[] memory e = new MakerVenue.Entry[](counts[c]);
@@ -899,7 +977,8 @@ contract V206MakerVenueForkTest is RegistryBase {
             );
         }
 
-        // Padded to 8 entries, only MAX_STRATEGIES are read: 2 Aqua reads and 1 allowance per maker, nothing more.
+        // Padded to 8 entries, only MAX_STRATEGIES are read. Pinned: 12 `rawBalances` (2 per maker), 6 MUMB `allowance`
+        // (the output token) and 0 USDC `allowance`. Other calls (balanceOf, the PoolManager read) are not counted.
         MakerVenue.Entry[] memory eight = new MakerVenue.Entry[](8);
         for (uint256 i; i < 8; i++) {
             eight[i] = six[i % 6];
@@ -909,6 +988,12 @@ contract V206MakerVenueForkTest is RegistryBase {
         vm.expectCall(USDC, abi.encodeWithSelector(IERC20.allowance.selector), 0);
         MakerVenue.Maker[] memory ms = _readEntries(eight, true);
         assertEq(ms.length, 6);
+    }
+
+    function test_V206_regimeTickIsThePoolsTick() public view {
+        // The pool's snapshot tick: slot0's tick at the block's first swap, which is what the guard prices against.
+        (int24 snap,,) = hookV2.anchorOfX(idV2);
+        assertEq(int256(snap), int256(TICK_6_18), "the math tests' 6/18 regime tick is the fork pool's tick");
     }
 
     function test_V206_constantsAndSharedMin() public view {
