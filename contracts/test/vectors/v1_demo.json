@@ -439,6 +439,62 @@
       "zeroForOne": false
     }
   ],
+  "exactOutSafe": [
+    {
+      "alloc": [
+        "489737735095220286451",
+        "500262264904779713549"
+      ],
+      "amount": "990000000000000000000",
+      "bandBps": 50,
+      "makers": [
+        {
+          "cap": "500262264904779713549",
+          "feeE9": 3000000,
+          "name": "priya",
+          "x": "100000000000",
+          "y": "100000000000000000000000"
+        }
+      ],
+      "name": "usdc-in-bandSafe",
+      "perVenue": [
+        "494185139",
+        "504290343"
+      ],
+      "poolOnlyIn": "1005206629",
+      "snapTick": 276324,
+      "totalInt": "998475482",
+      "totalReal": "998475479.849616",
+      "zeroForOne": true
+    },
+    {
+      "alloc": [
+        "492750636",
+        "497249364"
+      ],
+      "amount": "990000000",
+      "bandBps": 50,
+      "makers": [
+        {
+          "cap": "497249364",
+          "feeE9": 3000000,
+          "name": "priya",
+          "x": "100000000000000000000000",
+          "y": "100000000000"
+        }
+      ],
+      "name": "mumb-in-bandSafe",
+      "perVenue": [
+        "497243919216022860847",
+        "501238003587371724752"
+      ],
+      "poolOnlyIn": "1005206628710373846361",
+      "snapTick": 276324,
+      "totalInt": "998481922803394585599",
+      "totalReal": "998481922694752344504.303632",
+      "zeroForOne": false
+    }
+  ],
   "file": "v1_demo",
   "schema": "confluence-vectors/1",
   "threeMakers": [

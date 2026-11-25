@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {console2} from "forge-std/console2.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IAqua} from "@1inch/aqua/src/interfaces/IAqua.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ISwapVM} from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import {SwapQuery, SwapRegisters} from "@1inch/swap-vm/src/libs/VM.sol";
@@ -418,6 +419,16 @@ contract V208ExactOutTest is SplitBase {
         revert("no such exactOut vector");
     }
 
+    function _vecCaseSafe(string memory name) internal view returns (Vectors.ExactOutCase memory c) {
+        string memory json = Vectors.read(Vectors.V1_DEMO);
+        uint256 n = Vectors.exactOutSafeCount(json);
+        for (uint256 i; i < n; i++) {
+            c = Vectors.exactOutSafe(json, i);
+            if (keccak256(bytes(c.name)) == keccak256(bytes(name))) return c;
+        }
+        revert("no such exactOutSafe vector");
+    }
+
     /// @dev The makers of a vector case, registered with real funds (wallet = virtual) and the case's band.
     function _joinVec(Vectors.ExactOutCase memory c) internal returns (M[] memory ms) {
         ms = new M[](c.makers.length);
@@ -513,16 +524,10 @@ contract V208ExactOutTest is SplitBase {
     }
 
     /// @dev Named risk: the trader never pays more than pool-only for the same output, against a REAL pool-only swap,
-    ///      in all eight vector cases. Where the optimum gives the makers nothing the swap IS pool-only. The
-    ///      band-capped case is compared with the vector (which caps the maker at the real-number band edge E) with a
-    ///      tolerance derived here, in wei, before the assertion:
-    ///      the chain's cap b' is the safe cap, b' <= E. Moving E - b' more output to the pool costs at most
-    ///      (E - b') * m, where m is the pool's marginal input per output unit at the end of its share. For a
-    ///      constant-product pool, marginal / average = y / (y - s) with s the pool's output share and y its output
-    ///      reserve, and s * 100 < y here (asserted), so m <= average * 101 / 100 = (pool leg input / pool leg output)
-    ///      * 101 / 100. The maker's saving over the gap is not counted (it only lowers the true difference). Rounding:
-    ///      one ceiling per maker step (two) and per pool step (one) in each of the two totals, 4 wei in all.
-    ///      tolerance = (E - b') * poolIn * 101 / (poolOut * 100) + 4. It is computed from the case and never widened.
+    ///      in all eight vector cases. The six unbanded cases equal the V2-00 vector to the wei; where the optimum gives
+    ///      the makers nothing the swap IS pool-only. The two band cases are checked in two parts by `_checkBandCases`:
+    ///      the same caps applied (to the wei, against the `bandSafe` vector), and the cost of the safe-cap margin
+    ///      against the real-edge vector as its own reported number with a derived bound.
     function test_V208_minimisesInput() public {
         string[8] memory names = [
             "usdc-in-priya",
@@ -556,26 +561,46 @@ contract V208ExactOutTest is SplitBase {
             (uint256 sumIn,) = _sumLegs(r.legs);
             assertEq(sumIn, 0, "no leg");
         } else if (_endsWith(name, "band")) {
-            _checkBandTolerance(name, c, r);
+            _checkBandCases(name, c, r);
         } else {
             assertEq(r.paid, c.totalInt, string.concat(name, ": equals the vector to the wei"));
         }
     }
 
-    function _checkBandTolerance(string memory name, Vectors.ExactOutCase memory c, Run memory r) internal view {
-        uint256 edge = c.makers[0].cap; // the vector's cap: the real-number band edge, floored
+    /// @dev The band cases, in two parts. Neither is "within rounding" of the real-edge vector: the chain's safe cap sits
+    ///      below the real-number band edge the `band` vector uses, by the margin D-36 describes.
+    ///      (a) The SAME caps applied: the `bandSafe` vector caps the maker at the integer safe cap computed in Python
+    ///      (`safe_cap_out`, a second implementation of the rule). With the cap fixed the allocation is fixed (the maker at
+    ///      its cap, the pool takes the rest) and both sides price every leg with the same integer rounding, so the leg,
+    ///      its input and the total must match to the wei.
+    ///      (b) The margin's cost, reported as its own number: the chain's total minus the real-edge vector's total. It
+    ///      is at most the output the cap gives up, `E - b'`, times the pool's marginal input per output unit at the end of
+    ///      its share, bounded by `poolIn / poolOut * 101 / 100` (marginal over average is `y / (y - s) < 1.01` while the
+    ///      pool's share `s` is under 1% of its reserve, asserted), plus 4 wei for the rounding of two maker steps and
+    ///      one pool step in each of the two totals.
+    function _checkBandCases(string memory name, Vectors.ExactOutCase memory c, Run memory r) internal view {
+        Vectors.ExactOutCase memory cs = _vecCaseSafe(string.concat(name, "Safe"));
+        uint256 edge = c.makers[0].cap; // the real-number band edge, floored
         uint256 bChain = r.legs[0].amountOut;
         assertEq(r.legs[0].status, LegStatus.FILLED, "band case: filled at its cap");
-        assertLe(bChain, edge, "the safe cap is inside the real-number edge");
         assertGt(bChain, 0, "the safe cap is not zero");
+        // (a) the same caps applied, to the wei
+        assertEq(bChain, cs.makers[0].cap, "(a) the chain's safe cap = the reference's");
+        assertEq(r.legs[0].amountOut, cs.alloc[1], "(a) leg output");
+        assertEq(r.legs[0].amountIn, cs.perVenue[1], "(a) leg input");
+        assertEq(r.paid - r.legs[0].amountIn, cs.perVenue[0], "(a) the pool's leg");
+        assertEq(r.paid, cs.totalInt, "(a) total input, to the wei");
+        // (b) the margin's cost, reported separately
         PoolVenue.Pool memory pool =
             PoolVenue.read(manager, keyV2.toId(), keyV2.tickSpacing, c.zeroForOne, _lim(c.zeroForOne));
         assertLt(c.alloc[0] * 100, pool.segments[0].y, "premise: the pool's share is under 1% of its reserve");
-        uint256 tol = (edge - bChain) * c.perVenue[0] * 101 / (c.alloc[0] * 100) + 4;
-        console2.log(string.concat(name, ": edge - chain cap (output wei)"), edge - bChain);
-        console2.log(string.concat(name, ": tolerance (input wei)"), tol);
-        assertGe(r.paid + 4, c.totalInt, "band case: not cheaper than the vector beyond rounding");
-        assertLe(r.paid, c.totalInt + tol, "band case: within the derived tolerance of the vector");
+        assertGe(r.paid, c.totalInt, "(b) the margin never saves input");
+        uint256 cost = r.paid - c.totalInt;
+        uint256 costBound = (edge - bChain) * c.perVenue[0] * 101 / (c.alloc[0] * 100);
+        console2.log(string.concat(name, ": output the safe cap gives up, E - b' (output wei)"), edge - bChain);
+        console2.log(string.concat(name, ": margin cost (input wei)"), cost);
+        console2.log(string.concat(name, ": its bound, (E - b') * poolIn / poolOut * 1.01 (input wei)"), costBound);
+        assertLe(cost, costBound + 4, "(b) the margin's cost is within its bound plus 4 wei of rounding");
     }
 
     /// @dev A leg whose strict threshold is off by one either way is refused by the router and skipped, never
@@ -662,6 +687,138 @@ contract V208ExactOutTest is SplitBase {
         Run memory r2 = _runOut(keyV2, false, c2.amount);
         _assertBooksOut(bk0, _book(ms2), false, c2.amount, r2, ms2);
         assertEq(r2.legs[0].status, LegStatus.SKIP_REVERT, "the mocked leg failed");
+    }
+
+    struct PoolState {
+        uint160 sqrtPriceX96;
+        int24 tick;
+        uint128 liquidity;
+    }
+
+    /// @dev A real pool-only exact-output swap with the trader's and the PoolManager's balances and the pool's state after it.
+    struct OnlyOut {
+        Run r;
+        Book bk;
+        PoolState st;
+    }
+
+    function _poolState() internal view returns (PoolState memory s) {
+        (s.sqrtPriceX96, s.tick,,) = manager.getSlot0(idV2);
+        s.liquidity = manager.getLiquidity(idV2);
+    }
+
+    /// @dev The same swap with every maker unregistered, from the current state; the state is restored.
+    function _poolOnlyOutFull(bool zfo, uint256 b) internal returns (OnlyOut memory o) {
+        uint256 s = vm.snapshotState();
+        _unregisterAll(keyV2);
+        o.r = _runOut(keyV2, zfo, b);
+        o.bk = _book(new M[](0));
+        o.st = _poolState();
+        require(vm.revertToStateAndDelete(s), "revert failed");
+    }
+
+    /// @dev The swap, with `ms` registered and none usable, equals a real pool-only exact-output swap from the same
+    ///      snapshot to the wei: the trader's input and output, the pool's price, tick and liquidity, the PoolManager's
+    ///      and the trader's balances; no leg, each slot's status as expected, the makers' wallets and virtual balances
+    ///      untouched, the hook holds nothing and every allowance is 0. `ConfluenceSwap` is emitted, with one `Leg` per
+    ///      registered slot (none for no makers), as for exact input's pool-only swaps (`test_V207_noMakersIsPoolOnly`).
+    function _expectNoUsableMakers(string memory ctx, M[] memory ms, bool zfo, uint256 b, uint8[] memory want)
+        internal
+    {
+        OnlyOut memory o = _poolOnlyOutFull(zfo, b);
+        Book memory b0 = _book(ms);
+        Run memory r = _runOut(keyV2, zfo, b);
+        Book memory b1 = _book(ms);
+        PoolState memory st = _poolState();
+        assertEq(r.paid, o.r.paid, string.concat(ctx, ": trader input = real pool-only"));
+        assertEq(r.got, o.r.got, string.concat(ctx, ": trader output = real pool-only"));
+        assertEq(r.got, b, string.concat(ctx, ": the trader got B"));
+        assertEq(st.sqrtPriceX96, o.st.sqrtPriceX96, string.concat(ctx, ": pool price"));
+        assertEq(st.tick, o.st.tick, string.concat(ctx, ": pool tick"));
+        assertEq(st.liquidity, o.st.liquidity, string.concat(ctx, ": pool liquidity"));
+        for (uint256 k; k < 2; k++) {
+            assertEq(b1.trader[k], o.bk.trader[k], string.concat(ctx, ": trader balance"));
+            assertEq(b1.pm[k], o.bk.pm[k], string.concat(ctx, ": PoolManager balance"));
+            assertEq(b1.hook[k], 0, string.concat(ctx, ": the hook holds nothing"));
+        }
+        assertTrue(r.emitted, string.concat(ctx, ": one ConfluenceSwap"));
+        assertEq(r.legs.length, ms.length, string.concat(ctx, ": one Leg per registered slot"));
+        for (uint256 j; j < ms.length; j++) {
+            assertEq(r.legs[j].amountIn + r.legs[j].amountOut, 0, string.concat(ctx, ": no leg"));
+            assertEq(r.legs[j].status, want[j], string.concat(ctx, ": slot status"));
+            for (uint256 k; k < 2; k++) {
+                assertEq(b1.wallet[j][k], b0.wallet[j][k], string.concat(ctx, ": maker wallet"));
+                assertEq(b1.virt[j][k], b0.virt[j][k], string.concat(ctx, ": maker Aqua balance"));
+            }
+        }
+        _assertClean();
+    }
+
+    /// @dev Three makers, none usable for an exact-output swap in direction `zfo`: one docked, one drained of the output
+    ///      token, one priced 4% off the snapshot with a 2% band.
+    function _brokenMakers(bool zfo) internal returns (M[] memory ms) {
+        (int24 snap,,) = hookV2.anchorOf(keyV2.toId());
+        ms = new M[](3);
+        ms[0] = _joinM(keyV2, makers[0], 100_000e18, 100_000e6, _p());
+        ms[1] = _joinM(keyV2, makers[1], 100_000e18, 100_000e6, _p());
+        uint256 usdcRaw = 50_000 * USDC_1;
+        ms[2] = _joinM(keyV2, makers[2], _mumbAt(usdcRaw, snap + 400), usdcRaw, _p());
+        vm.prank(makers[0]);
+        IAqua(AQUA).dock(ROUTER, ms[0].hash, _tokens());
+        address tOut = zfo ? address(mumb) : USDC;
+        vm.startPrank(makers[1]);
+        IERC20(tOut).transfer(deployer, IERC20(tOut).balanceOf(makers[1]));
+        vm.stopPrank();
+    }
+
+    /// @dev Replaces `test_V207_exactOutputUnchanged` (D-36): exact output with no usable makers is exactly pool-only, in
+    ///      both directions: (a) no makers registered, (b) three makers all skipped (docked, drained, band-skipped:
+    ///      `SKIP_UNDERFUNDED`, `SKIP_UNDERFUNDED`, `SKIP_BAND`), (c) a maker the pool beats (`SKIP_MIN_LEG`).
+    function test_V208_exactOutNoUsableMakersIsPoolOnly() public {
+        for (uint256 d; d < 2; d++) {
+            bool zfo = d == 0;
+            uint256 b = (zfo ? MUMB_1 : USDC_1) * 990;
+            uint256 s = vm.snapshotState();
+            _initExact(keyV2);
+            _expectNoUsableMakers("no makers", new M[](0), zfo, b, new uint8[](0));
+            vm.revertToState(s);
+
+            _initExact(keyV2);
+            uint8[] memory want = new uint8[](3);
+            (want[0], want[1], want[2]) = (LegStatus.SKIP_UNDERFUNDED, LegStatus.SKIP_UNDERFUNDED, LegStatus.SKIP_BAND);
+            _expectNoUsableMakers("all skipped", _brokenMakers(zfo), zfo, b, want);
+            vm.revertToState(s);
+
+            Vectors.ExactOutCase memory c = _vecCase(zfo ? "usdc-in-poolOptimal" : "mumb-in-poolOptimal");
+            _initExact(keyV2);
+            want = new uint8[](1);
+            want[0] = LegStatus.SKIP_MIN_LEG;
+            _expectNoUsableMakers("pool-only cheaper", _joinVec(c), zfo, c.amount, want);
+            vm.revertToState(s);
+        }
+    }
+
+    /// @dev The M3 mirror: an exact-output swap for the very MUMB that 1,000 USDC buys at M3 (991549859869719173233 wei),
+    ///      with the M3 maker. Logs what it paid, how far that is from 1,000 USDC, what pool-only pays for the same
+    ///      output, and whether the maker filled.
+    function test_V208_m3Mirror() public {
+        uint256 b = 991549859869719173233;
+        _initExact(keyV2);
+        M[] memory ms = new M[](1);
+        ms[0] = _joinM(keyV2, makers[0], 100_000e18, 100_000e6, _p());
+        uint256 poolOnlyPaid = _poolOnlyOut(keyV2, true, b).paid;
+        Book memory b0 = _book(ms);
+        Run memory r = _runOut(keyV2, true, b);
+        _assertBooksOut(b0, _book(ms), true, b, r, ms);
+        console2.log("M3 mirror: output requested (wei MUMB)", b);
+        console2.log("M3 mirror: input paid (raw USDC)", r.paid);
+        console2.log("M3 mirror: 1,000 USDC minus paid (raw USDC, signed)", int256(1_000 * USDC_1) - int256(r.paid));
+        console2.log("M3 mirror: pool-only input for the same output (raw USDC)", poolOnlyPaid);
+        console2.log("M3 mirror: maker leg status (0 = filled)", r.legs[0].status);
+        console2.log("M3 mirror: maker leg output (wei MUMB)", r.legs[0].amountOut);
+        console2.log("M3 mirror: maker leg input (raw USDC)", r.legs[0].amountIn);
+        assertEq(r.legs[0].status, LegStatus.FILLED, "the maker filled");
+        assertLt(r.paid, poolOnlyPaid, "cheaper than pool-only");
     }
 
     /// @dev The hook's constructor takes both splitters (D-36): a zero address, an address with no code, or the same

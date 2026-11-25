@@ -275,6 +275,31 @@ class V1Numbers(unittest.TestCase):
                 self.assertGreaterEqual(cost + 4, total, (c["name"], d))
 
 
+    def test_exact_out_safe_vector(self):
+        """V2-08: the band cases with the chain's safe cap. The cap is inside the real-number edge, the maker is
+        pinned at it, the total is never below the real-edge case's (the margin costs, never saves), and no nearby split
+        is cheaper than the allocation beyond 4 wei of rounding."""
+        edge = {c["name"]: c for c in gen_vectors.exact_out_cases(gen_vectors.V1_USDC_IS_CURRENCY0)}
+        safe = gen_vectors.exact_out_cases(gen_vectors.V1_USDC_IS_CURRENCY0, safe=True)
+        self.assertEqual([c["name"] for c in safe], ["usdc-in-bandSafe", "mumb-in-bandSafe"])
+        for c in safe:
+            unsafe = edge[c["name"].replace("bandSafe", "band")]
+            cap, real_cap = int(c["makers"][0]["cap"]), int(unsafe["makers"][0]["cap"])
+            self.assertLess(cap, real_cap, c["name"])
+            self.assertEqual(int(c["alloc"][1]), cap, c["name"])
+            self.assertGreaterEqual(int(c["totalInt"]), int(unsafe["totalInt"]), c["name"])
+            self.assertLess(int(c["totalInt"]), int(c["poolOnlyIn"]), c["name"])
+            zfo, amount = c["zeroForOne"], int(c["amount"])
+            state = venues.v1_demo_pool(gen_vectors.V1_USDC_IS_CURRENCY0)
+            m = venues.Venue(int(c["makers"][0]["x"]), int(c["makers"][0]["y"]), c["makers"][0]["feeE9"], cap)
+            for d in (-10**6, -1000, -1, 1, 1000, 10**6):
+                b = cap + d
+                if b < 0 or b > cap:
+                    continue
+                cost = venues.pool_swap_exact_out(state, amount - b, zfo).amount_in + (venues.cp_in_int(m, b) if b else 0)
+                self.assertGreaterEqual(cost + 4, int(c["totalInt"]), (c["name"], d))
+
+
 class TickMath(unittest.TestCase):
     def test_known_values(self):
         self.assertEqual(venues.sqrt_price_at_tick(0), 1 << 96)

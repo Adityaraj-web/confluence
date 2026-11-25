@@ -278,6 +278,7 @@ def v1_demo_file():
     doc = json.loads(text)
     doc["threeMakers"] = three_makers_cases(c0)
     doc["exactOut"] = exact_out_cases(c0)
+    doc["exactOutSafe"] = exact_out_cases(c0, safe=True)
     return json.dumps(doc, indent=2, sort_keys=True) + "\n"
 
 
@@ -351,10 +352,41 @@ def band_edge_out(snap_tick, zero_in, band_bps, x, y):
     return edge.numerator // edge.denominator
 
 
-def exact_out_cases(usdc_is_currency0):
+def safe_cap_out(snap_tick, zero_in, band_bps, x, y):
+    """The exact-output band cap the chain applies (`MakerVenue.capsOut`, D-36), in plain integers: the largest output b
+    whose fill the guard accepts by the sufficient condition `2^s b (y - b) >= lo N(b)` (token0 in) or
+    `(hi + 1) b (y - b) > 2^s N(b)` (token1 in), `N(b) = b x + y - b - 1`, with the end placed at
+    `b_r - (4 ceil(c y / b_r) + 2)` (b_r = y - ceil(c x)) and checked exactly. Written from the derivation, not from the
+    Solidity, so it is a second implementation of the same rule. The other caps (wallet, PoolManager) do not bind on the
+    v1 demo makers."""
+    sqrt_p = vn.sqrt_price_at_tick(snap_tick)
+    assert sqrt_p < 2**127, "X96 scale not modelled here"
+    one = 2**192
+    ref = sqrt_p * sqrt_p
+    lim = ref * band_bps // 10_000
+    lo, hi = ref - lim, ref + lim
+    num, den = (lo, one) if zero_in else (one, hi + 1)
+    ceil_div = lambda a, b: -(-a // b)
+    cx = ceil_div(num * x, den)
+    assert cx < y
+    edge = y - cx
+    margin = 4 * ceil_div(ceil_div(num * y, den), edge) + 2
+    assert margin < edge
+
+    def ok(b):
+        n, w = b * x + y - b - 1, b * (y - b)
+        return lo * n <= one * w if zero_in else not ((hi + 1) * w <= one * n)
+
+    assert ok(margin) and ok(edge - margin)
+    return edge - margin
+
+
+def exact_out_cases(usdc_is_currency0, safe=False):
     """Exact output on the v1 pool, 990 output units, both directions, four maker sets each. Allocations come from
     the integer-mode solver (what SplitMath gives on chain); the pool's leg is priced by the v4 walk, each maker's
-    by SwapVM's rounding (XYC input rounded up, then the fee grossed up, rounded up)."""
+    by SwapVM's rounding (XYC input rounded up, then the fee grossed up, rounded up). With `safe`, only the band case,
+    its maker capped at the chain's safe cap (`safe_cap_out`) instead of the real-number band edge: the same caps the
+    chain applies, so the totals can be matched to the wei (the margin's cost is the difference from the unsafe case)."""
     out = []
     priya = lambda usdc_in, fee=3_000_000: (
         Venue(100_000 * 10**6, 100_000 * 10**18, fee, None)
@@ -377,16 +409,19 @@ def exact_out_cases(usdc_is_currency0):
             ("band", [priya(usdc_in)], [True], EXACT_OUT_BAND_BPS),
             ("poolOptimal", [priya(usdc_in, 50_000_000)], [None], None),
         )
+        if safe:
+            sets = (("bandSafe", [priya(usdc_in)], [True], EXACT_OUT_BAND_BPS),)
         for sname, makers, caps, band_bps in sets:
             if caps[0] is not None:
-                cap = band_edge_out(state.tick, zfo, band_bps, makers[0].x, makers[0].y)
+                cap_fn = safe_cap_out if safe else band_edge_out
+                cap = cap_fn(state.tick, zfo, band_bps, makers[0].x, makers[0].y)
                 makers = [Venue(makers[0].x, makers[0].y, makers[0].fee_e9, cap)]
             pool_v = Venue(seg.x, seg.y, seg.fee_e9, seg.cap_out)
             alloc = wf.solve_exact_out_int([pool_v] + makers, amount)
             assert sum(alloc) == amount and alloc[0] < seg.cap_out, (dname, sname)
             pool_leg = vn.pool_swap_exact_out(state, alloc[0], zfo).amount_in
             legs = [vn.cp_in_int(m, b) if b > 0 else 0 for m, b in zip(makers, alloc[1:])]
-            if sname == "band":
+            if sname.startswith("band"):
                 assert alloc[1] == makers[0].cap, "the band cap must bind"
             if sname == "poolOptimal":
                 assert all(b == 0 for b in alloc[1:]), "pool-only must be optimal"

@@ -269,8 +269,20 @@ library Vectors {
         return _arrayLength(json, ".exactOut");
     }
 
-    function exactOut(string memory json, uint256 i) internal view returns (ExactOutCase memory c) {
-        string memory p = string.concat(".exactOut[", vm.toString(i), "]");
+    /// @notice Number of `exactOutSafe` cases: the band cases with the chain's safe cap applied (V2-08, D-36).
+    function exactOutSafeCount(string memory json) internal view returns (uint256) {
+        return _arrayLength(json, ".exactOutSafe");
+    }
+
+    function exactOut(string memory json, uint256 i) internal view returns (ExactOutCase memory) {
+        return _exactOutAt(json, string.concat(".exactOut[", vm.toString(i), "]"));
+    }
+
+    function exactOutSafe(string memory json, uint256 i) internal view returns (ExactOutCase memory) {
+        return _exactOutAt(json, string.concat(".exactOutSafe[", vm.toString(i), "]"));
+    }
+
+    function _exactOutAt(string memory json, string memory p) private view returns (ExactOutCase memory c) {
         c.name = vm.parseJsonString(json, string.concat(p, ".name"));
         c.amount = vm.parseJsonUint(json, string.concat(p, ".amount"));
         c.zeroForOne = vm.parseJsonBool(json, string.concat(p, ".zeroForOne"));
