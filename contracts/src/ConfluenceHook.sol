@@ -503,10 +503,7 @@ contract ConfluenceHook is IHooks {
         Plan memory p,
         Leg[] memory legs,
         bool exactIn
-    )
-        private
-        returns (uint256 sumIn, uint256 sumOut)
-    {
+    ) private returns (uint256 sumIn, uint256 sumOut) {
         (Currency cIn, Currency cOut) = zeroForOne ? (key.currency0, key.currency1) : (key.currency1, key.currency0);
         uint256 n = legs.length;
         uint256 planned = 0;

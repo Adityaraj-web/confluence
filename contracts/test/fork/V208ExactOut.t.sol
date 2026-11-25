@@ -130,7 +130,9 @@ contract V208BandCapOutTest is Test {
             MakerVenue.capsOut(x, y, FEE, y, type(uint256).max, snap, zeroIn, bps);
         assertEq(uint8(st), uint8(MakerVenue.Status.OK), string.concat(name, ": status"));
         _density(_maker(x, y, FEE), snap, zeroIn, bps, bMin, bMax);
-        emit log_named_uint(string.concat(name, ": bps ", vm.toString(bps), " bMin / bMax relative 1e18"), bMin * 1e18 / bMax);
+        emit log_named_uint(
+            string.concat(name, ": bps ", vm.toString(bps), " bMin / bMax relative 1e18"), bMin * 1e18 / bMax
+        );
     }
 
     function _regime(string memory name, int24 snap, bool zeroIn, uint256 x, uint16 bps) internal {
@@ -174,13 +176,35 @@ contract V208BandCapOutTest is Test {
     ///      (`Fee.sol:95`). Hand-computed: x = y = 1,000, b = 7, fee 0.30%: net = ceil(7000 / 993) = 8, gross = 8 +
     ///      ceil(8 * 3e6 / (1e9 - 3e6)) = 8 + 1 = 9.
     function test_V208_quoteExactOutRoundsUpTwice() public pure {
-        MakerVenue.Maker memory m = MakerVenue.Maker(address(0), bytes32(0), MakerVenue.Status.OK, 1_000, 1_000, FEE, 0, 0, 0);
+        MakerVenue.Maker memory m =
+            MakerVenue.Maker(address(0), bytes32(0), MakerVenue.Status.OK, 1_000, 1_000, FEE, 0, 0, 0);
         (uint256 net, uint256 gross) = MakerVenue.quoteExactOut(m, 7);
         assertEq(net, 8, "net: ceil(7 * 1000 / 993)");
         assertEq(gross, 9, "gross: 8 + ceil(8 * fee / (1e9 - fee))");
         (net, gross) = MakerVenue.quoteExactOut(m, 1);
         assertEq(net, 2, "net: ceil(1000 / 999)");
         assertEq(gross, 3, "gross: 2 + ceil(2 * 3e6 / 997e6) = 3");
+    }
+
+    /// @dev `capsOut` never reverts (its NatSpec). Near the top tick with a 1 wei maker, `c` is about 2^128 and the
+    ///      margin `4 ceil(c y / edge) + 2` overflows 2^256 when `y` is within a few wei of `c x` (found by the spec
+    ///      review): every such input must give a status, never a panic.
+    function test_V208_capsOutNeverRevertsAtExtremeTicks() public pure {
+        int24 snap = 887_000;
+        uint16 bps = 1;
+        uint256 s = TickMath.getSqrtPriceAtTick(snap);
+        uint256 ref = FullMath.mulDiv(s, s, 2 ** 96);
+        uint256 lo = ref - FullMath.mulDiv(ref, bps, 10_000);
+        uint256 tried;
+        for (uint256 x = 1; x <= 3; x++) {
+            for (uint256 k = 1; k <= 4; k++) {
+                uint256 y = FullMath.mulDivRoundingUp(lo, x, 2 ** 96) + k;
+                if (y > type(uint128).max) continue;
+                tried++;
+                MakerVenue.capsOut(x, y, 0, y, type(uint256).max, snap, true, bps);
+            }
+        }
+        assertEq(tried, 4, "x = 1 with k = 1..4 fit under 2^128; x >= 2 puts c x above it");
     }
 
     // ---------------------------------------------------------------- the cap against the real guard
@@ -415,14 +439,9 @@ contract V208ExactOutTest is SplitBase {
     }
 
     /// @dev Mocks the splitter's exact-output return and checks the swap is exact pool-only with `SKIP_PLAN` slots.
-    function _expectPoolOnlyOut(
-        bytes memory ret,
-        bool zfo,
-        uint256 b,
-        Run memory po,
-        M[] memory ms,
-        string memory ctx
-    ) internal {
+    function _expectPoolOnlyOut(bytes memory ret, bool zfo, uint256 b, Run memory po, M[] memory ms, string memory ctx)
+        internal
+    {
         uint256 s = vm.snapshotState();
         vm.mockCall(address(splitterOut), abi.encodeWithSelector(splitterOut.planExactOut.selector), ret);
         Book memory b0 = _book(ms);
@@ -614,7 +633,9 @@ contract V208ExactOutTest is SplitBase {
     function _mockOutRevert(M memory m, bool zfo, uint256 b, uint256 a) internal {
         (address tIn, address tOut) = _io(keyV2, zfo);
         ISwapVM.Order memory o = _order(keyV2, m);
-        vm.mockCallRevert(ROUTER, abi.encodeCall(ISwapVM.swap, (o, tIn, tOut, b, _tdOut(a))), abi.encode("mocked revert"));
+        vm.mockCallRevert(
+            ROUTER, abi.encodeCall(ISwapVM.swap, (o, tIn, tOut, b, _tdOut(a))), abi.encode("mocked revert")
+        );
     }
 
     /// @dev The hook holds nothing and every allowance is 0 after exact-output swaps in both directions, with fills
@@ -794,6 +815,14 @@ contract V208ExactOutTest is SplitBase {
         q = _copy(p);
         q.walked = c.amount - 1; // the walk cannot give the whole output
         _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "truncated walk");
+
+        q = _copy(p);
+        q.amountIn[0] = 0; // a leg with an output and no input
+        _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "leg without input");
+
+        q = _copy(p);
+        q.amountOut[0] = 0; // a leg with an input and no output
+        _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "leg without output");
 
         q = _copy(p);
         q.tail = 1; // exact output has no tail
@@ -984,8 +1013,15 @@ contract V208ExactOutTest is SplitBase {
 
     function _coolAll() internal {
         address[9] memory touched = [
-            address(manager), address(hookV2), address(splitter), address(splitterOut), AQUA, ROUTER, USDC,
-            address(mumb), _guard()
+            address(manager),
+            address(hookV2),
+            address(splitter),
+            address(splitterOut),
+            AQUA,
+            ROUTER,
+            USDC,
+            address(mumb),
+            _guard()
         ];
         for (uint256 i; i < touched.length; i++) {
             vm.cool(touched[i]);
@@ -1045,8 +1081,18 @@ contract V208ExactOutTest is SplitBase {
         for (uint256 i; i < n; i++) {
             limits[i] = 285_000 + i * 5_000;
         }
-        uint256[10] memory high =
-            [uint256(550_000), 600_000, 700_000, 800_000, 1_000_000, 1_500_000, 2_000_000, 3_000_000, 4_000_000, 6_000_000];
+        uint256[10] memory high = [
+            uint256(550_000),
+            600_000,
+            700_000,
+            800_000,
+            1_000_000,
+            1_500_000,
+            2_000_000,
+            3_000_000,
+            4_000_000,
+            6_000_000
+        ];
         for (uint256 i; i < 10; i++) {
             limits[n + i] = high[i];
         }
@@ -1060,7 +1106,9 @@ contract V208ExactOutTest is SplitBase {
             checked++;
             vm.recordLogs();
             bool ok = _tryAtLimitOut(limits[i]);
-            assertTrue(ok, string.concat(label, ": exact-out split swap reverted at gas limit ", vm.toString(limits[i])));
+            assertTrue(
+                ok, string.concat(label, ": exact-out split swap reverted at gas limit ", vm.toString(limits[i]))
+            );
             (ConfluenceHook.Leg[] memory legs,) = _legsFrom(vm.getRecordedLogs(), address(hookV2));
             if (_countStatus(legs, LegStatus.FILLED) > 0) filled++;
             _assertClean();

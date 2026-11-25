@@ -441,7 +441,10 @@ library MakerVenue {
         uint256 edge = y - cx; // floor of the real edge b_r = y - c x
         uint256 cy = _mulDivUp(num, y, den);
         if (cy == type(uint256).max) return (false, 0, 0);
-        uint256 m = 4 * Math.ceilDiv(cy, edge) + 2;
+        uint256 q = Math.ceilDiv(cy, edge);
+        // Near the top tick with a 1 to 3 wei maker, `c` is about 2^128 and `4 q + 2` would overflow: no room, no cap.
+        if (q > (type(uint256).max - 2) / 4) return (false, 0, 0);
+        uint256 m = 4 * q + 2;
         if (m >= edge) return (false, 0, 0);
         (bMin, bMax) = (m, edge - m);
         ok = _okOut(b, x, y, bMin) && _okOut(b, x, y, bMax);

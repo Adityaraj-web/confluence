@@ -49,7 +49,7 @@ Solo build by Adityaraj from Nov 11, 2026. Design: `docs/ARCHITECTURE-v2.md`. Bu
 | V2-05 | StrategyTemplate and registry | M3 Maker market | V2-04 | Done | D-33; supersedes D-09, D-18 |
 | V2-06 | MakerVenue | M3 | V2-03, V2-05 | Done | D-34; safe band cap |
 | V2-07 | Hint-free split in beforeSwap | M3 | V2-01, V2-02, V2-03, V2-06 | Done | D-35; **M3 met: 991549859869719173233 wei with empty hookData (v1 hinted 991549823315669231761)** |
-| V2-08 | Exact output | M4 Completeness | V2-07 | Todo | |
+| V2-08 | Exact output | M4 Completeness | V2-07 | Done (not merged) | D-36; second splitter `ConfluenceSplitterOut` (exact-input `ConfluenceSplitter` byte-identical to V2-07) |
 | V2-09 | Quoting parity and Lens | M4 | V2-07, V2-08 | Todo | M4: quoter = swap, both modes |
 | V2-10 | Attack suite | M5 Proof | V2-04 to V2-08 | Todo | |
 | V2-11 | Gas budget | M5 | V2-07 to V2-09 | Todo | |

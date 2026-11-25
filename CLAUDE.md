@@ -65,6 +65,7 @@ contracts/
   src/ConfluenceHook.sol
   src/BandGuardV2.sol                  v2 Extruction target
   src/ConfluenceSplitter.sol           v2 split planner (view, immutable; the hook calls it, D-35)
+  src/ConfluenceSplitterOut.sol        v2 exact-output split planner (view, immutable; the hook calls it, D-36)
   src/ConfluenceLens.sol               v2 view contract
   src/libraries/                       SplitMath, PoolVenue, MakerVenue, AnchorLib, StrategyTemplate
   src/v1/                              v1 hook and band contract, frozen (moved in V2-00) for v1 tests and the attack suite
