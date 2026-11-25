@@ -196,6 +196,33 @@ library MakerVenue {
         out = net == 0 ? 0 : Math.mulDiv(net, m.y, m.x + net);
     }
 
+    /// @notice STUB (V2-08 red step): exact-output venue read. Real implementation follows.
+    function readOut(
+        IPoolManager,
+        PoolKey memory,
+        address,
+        Entry[] memory entries,
+        bool,
+        int24,
+        int56
+    ) internal pure returns (Maker[] memory out) {
+        out = new Maker[](Math.min(entries.length, MAX_MAKERS));
+    }
+
+    /// @notice STUB (V2-08 red step): exact-output caps.
+    function capsOut(uint256, uint256, uint32, uint256, uint256, int24, bool, uint16)
+        internal
+        pure
+        returns (Status status, uint256 bMin, uint256 bMax, uint256 aMax)
+    {
+        return (Status.SKIP_BAND, 0, 0, 0);
+    }
+
+    /// @notice STUB (V2-08 red step): exact-output quote.
+    function quoteExactOut(Maker memory, uint256) internal pure returns (uint256 net, uint256 gross) {
+        return (0, 0);
+    }
+
     /// @notice The band predicate exactly as `BandGuardV2` evaluates it on a fill with net input `net` and output
     ///         `out` (V2-04 `_checkBand`), for a snapshot and band. Anyone may call (it is pure).
     function bandPasses(int24 snapTick, bool zeroIn, uint16 bandBps, uint256 net, uint256 out)
