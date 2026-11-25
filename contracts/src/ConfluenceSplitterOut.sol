@@ -28,10 +28,11 @@ import {SplitMath} from "./libraries/SplitMath.sol";
 ///        - `capMin[i]`, `capIn[i]`: the smallest and largest output of one fill of maker `i`, as read;
 ///        - `poolOut`: the INPUT the pool needs for `poolIn`; `poolOnlyOut`: the input pool-only needs for the whole
 ///          output, over the walked segments;
-///        - `tail`: a LOWER bound on the extra input pool-only needs past a truncated walk (0 at a hard end);
+///        - `tail`: always 0 (no estimate past the walk);
 ///        - `walked`: the output the walked segments give; `truncated`: 1 if the walk stopped before the limit.
-///      A pool that cannot give the whole output at a hard end of liquidity stays pool-only: every planned leg becomes
-///      `SKIP_NOT_BETTER` (D-36; a product gap recorded in PROGRESS).
+///      If the walked segments cannot give the whole output, the swap stays pool-only: every planned leg becomes
+///      `SKIP_NOT_BETTER`. The walk cannot tell the end of the liquidity from its own bound (D-30), so it never guesses
+///      what lies beyond it (D-36; a product gap recorded in PROGRESS).
 contract ConfluenceSplitterOut {
     using PoolIdLibrary for PoolKey;
 
@@ -45,8 +46,6 @@ contract ConfluenceSplitterOut {
     uint256 public constant PLAN_WORDS = 36;
 
     uint256 private constant BPS = 10_000;
-    uint256 private constant PIPS = 1e6;
-    uint256 private constant Q96 = 2 ** 96;
 
     /// @notice The split of the output `amountOut` for a swap on `key` in direction `zeroForOne` with the swap's own
     ///         price limit, at the anchor (`snapTick`, `emaTickX`) the hook stored for this block. Anyone may call (it is
@@ -92,15 +91,15 @@ contract ConfluenceSplitterOut {
 
         uint256 given = _quotes(pool, amountOut, p);
         if (p.poolIn == amountOut) return p;
-        // Not provably cheaper: a pool share past a truncated walk, a pool that cannot give the whole output at a hard
-        // end (the comparison is undefined there), or the split's input above pool-only's plus the tail bound.
-        bool better = !(pool.truncated && p.poolIn > p.walked) && (pool.truncated || given >= amountOut);
+        // Not provably cheaper: the walked segments cannot give the whole output (the comparison with pool-only is
+        // undefined past the walk), or the split's input is above pool-only's.
+        bool better = given >= amountOut;
         if (better) {
             uint256 makersIn = 0;
             for (uint256 i; i < n; i++) {
                 makersIn += p.amountIn[i];
             }
-            better = p.poolOut + makersIn <= p.poolOnlyOut + p.tail;
+            better = p.poolOut + makersIn <= p.poolOnlyOut;
         }
         if (!better) {
             for (uint256 i; i < n; i++) {
@@ -214,10 +213,7 @@ contract ConfluenceSplitterOut {
         p.poolIn = amount - sumOut;
     }
 
-    /// @dev The pool quotes for the never-worse check (carry-overs 5 and 6). `tail` is a lower bound on what the pool
-    ///      needs past a truncated walk: the rest of the output at the price where the walk stopped, rounded down, then
-    ///      grossed up by the fee, rounded down. The pool's price only worsens along a swap, so the real input is at
-    ///      least that. Returns the output the walked segments gave.
+    /// @dev The pool quotes for the never-worse check (carry-overs 5 and 6). Returns the output the walked segments gave.
     function _quotes(PoolVenue.Pool memory pool, uint256 amount, Plan memory p) private pure returns (uint256 given) {
         uint256 len = pool.segments.length;
         for (uint256 i = 0; i < len && i < PoolVenue.MAX_TICK_RANGES; i++) {
@@ -226,15 +222,6 @@ contract ConfluenceSplitterOut {
         p.truncated = pool.truncated ? 1 : 0;
         (p.poolOut,,) = PoolVenue.quoteExactOut(pool, p.poolIn);
         (p.poolOnlyOut, given,) = PoolVenue.quoteExactOut(pool, amount);
-        if (pool.truncated && given < amount && len > 0) {
-            uint256 s = pool.segments[len - 1].sqrtPriceEndX96;
-            uint256 rest = amount - given;
-            // Token0 in buys token1: input = output / price = output * Q96^2 / s^2; token1 in buys token0: output * s^2 / Q96^2.
-            uint256 net = pool.zeroForOne
-                ? Math.mulDiv(Math.mulDiv(rest, Q96, s), Q96, s)
-                : Math.mulDiv(Math.mulDiv(rest, s, Q96), s, Q96);
-            p.tail = Math.mulDiv(net, PIPS, PIPS - pool.swapFee);
-        }
     }
 
     function _tooSmall(uint256 x, uint256 capMin, uint256 amount) private pure returns (bool) {

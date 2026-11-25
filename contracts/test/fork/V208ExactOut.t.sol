@@ -759,13 +759,11 @@ contract V208ExactOutTest is SplitBase {
         assertEq(_countFilled(p), 3, "premise: three legs planned");
 
         Plan memory q = _copy(p);
-        q.amountOut[0] = p.capIn[0] + 1; // over the maker's reported cap
-        q.poolIn = c.amount - q.amountOut[0] - q.amountOut[1] - q.amountOut[2];
+        q.capIn[0] = p.amountOut[0] - 1; // the leg is over the maker's reported largest fill
         _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "over cap");
 
         q = _copy(p);
-        q.amountOut[0] = p.capMin[0] - 1; // under the smallest fill
-        q.poolIn = c.amount - q.amountOut[0] - q.amountOut[1] - q.amountOut[2];
+        q.capMin[0] = p.amountOut[0] + 1; // the leg is under the maker's reported smallest fill
         _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "under capMin");
 
         q = _copy(p);
@@ -777,8 +775,8 @@ contract V208ExactOutTest is SplitBase {
         _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "bad status");
 
         q = _copy(p);
-        q.amountOut[4] = p.amountOut[0]; // a leg for a slot that is not registered
-        q.poolIn -= p.amountOut[0];
+        (q.amountOut[4], q.amountIn[4], q.status[4], q.capIn[4]) = (p.amountOut[0], p.amountIn[0], 0, p.capIn[0]);
+        (q.amountOut[0], q.amountIn[0]) = (0, 0); // the same leg, moved to a slot that is not registered
         _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "nonexistent slot");
 
         q = _copy(p);
@@ -791,12 +789,15 @@ contract V208ExactOutTest is SplitBase {
 
         q = _copy(p);
         q.poolOnlyOut = 1; // pool-only claimed to cost almost nothing: the split is not better
-        q.tail = 0;
         _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "not better");
 
         q = _copy(p);
-        (q.truncated, q.walked) = (1, 0); // the pool's share past a truncated walk
+        q.walked = c.amount - 1; // the walk cannot give the whole output
         _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "truncated walk");
+
+        q = _copy(p);
+        q.tail = 1; // exact output has no tail
+        _expectPoolOnlyOut(abi.encode(q), true, c.amount, po, ms, "tail");
 
         _expectPoolOnlyOut("garbage", true, c.amount, po, ms, "wrong length");
     }

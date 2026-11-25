@@ -459,9 +459,9 @@ contract ConfluenceHook is IHooks {
     /// [capMin, capIn] as read and at least `MIN_LEG_BPS`, in the swap's specified units (input for exact input, output
     /// for exact output); at most `MAX_LEGS`; the legs and the pool's share sum to the amount; the legs' total input
     /// within the PoolManager's balance of the input token (read here); the other side within int128; no pool share past
-    /// a truncated walk, and for exact output no plan when the pool is short of the amount at a hard end; and the
-    /// split's quoted other side no worse than pool-only's plus the tail bound (at least the output for exact input, at
-    /// most the input for exact output). Every operation is bounded so that no plan can make it revert.
+    /// a truncated walk, and for exact output no plan unless the walked segments give the whole output; and the
+    /// split's quoted other side no worse than pool-only's (at least the output plus the tail bound for exact input, at
+    /// most the input for exact output, whose tail is 0). Every operation is bounded so that no plan can make it revert.
     function _checkPlan(Plan memory p, address tokenIn, uint256 amount, uint256 n, bool exactIn)
         private
         view
@@ -490,7 +490,8 @@ contract ConfluenceHook is IHooks {
         if (p.poolOut > _MAX_INT128 || p.poolOnlyOut > _MAX_INT128 || p.tail > _MAX_INT128) return false;
         if (p.truncated != 0 && p.poolIn > p.walked) return false;
         if (exactIn) return p.poolOut + sumOt >= p.poolOnlyOut + p.tail;
-        return (p.truncated != 0 || p.walked >= amount) && p.poolOut + sumOt <= p.poolOnlyOut + p.tail;
+        // Exact output: the walked segments must give the whole output (no estimate past the walk, D-36).
+        return p.tail == 0 && p.walked >= amount && p.poolOut + sumOt <= p.poolOnlyOut;
     }
 
     /// @dev Runs the planned legs. Takes their total input once, fills each through the router, then settles back
