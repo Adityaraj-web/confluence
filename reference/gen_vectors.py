@@ -277,6 +277,7 @@ def v1_demo_file():
     # V2-07: a top-level array beside `cases`, so the cases above (and `count`) stay byte-identical.
     doc = json.loads(text)
     doc["threeMakers"] = three_makers_cases(c0)
+    doc["exactOut"] = exact_out_cases(c0)
     return json.dumps(doc, indent=2, sort_keys=True) + "\n"
 
 
@@ -322,6 +323,95 @@ def three_makers_cases(usdc_is_currency0):
                 "totalReal": real_str(real.total_out),
             }
         )
+    return out
+
+
+# Exact output on the v1 pool (V2-08). The amount is the output, 990 units of the output token, in both directions.
+# `poolOptimal` is a maker priced worse than the pool (5% fee on Priya's reserves): the optimum gives it nothing.
+# `band` is Priya with a 0.50% band (`bandBps` 50): her exact-output share would pass 500 MUMB, so the band cap
+# binds. The vector's cap is the REAL-NUMBER band edge in output units (floored); the chain's safe cap sits a little
+# below it (D-34, D-36), and the test states the resulting tolerance in wei.
+EXACT_OUT_BAND_BPS = 50
+EXACT_OUT_AMOUNT_UNITS = 990
+
+
+def band_edge_out(snap_tick, zero_in, band_bps, x, y):
+    """The largest exact-output b (real number, floored) whose fill the guard still passes, X192 scale (the v1 pool's
+    tick is far below the X96 switch). With c = lo / 2^192 (token0 in) or 2^192 / (hi + 1) (token1 in):
+    b_r = y - c * x. See D-36."""
+    from fractions import Fraction
+
+    sqrt_p = vn.sqrt_price_at_tick(snap_tick)
+    assert sqrt_p < 2**127, "X96 scale not modelled here"
+    ref = sqrt_p * sqrt_p
+    lim = ref * band_bps // 10_000
+    lo, hi = ref - lim, ref + lim
+    c = Fraction(lo, 2**192) if zero_in else Fraction(2**192, hi + 1)
+    edge = Fraction(y) - c * Fraction(x)
+    return edge.numerator // edge.denominator
+
+
+def exact_out_cases(usdc_is_currency0):
+    """Exact output on the v1 pool, 990 output units, both directions, four maker sets each. Allocations come from
+    the integer-mode solver (what SplitMath gives on chain); the pool's leg is priced by the v4 walk, each maker's
+    by SwapVM's rounding (XYC input rounded up, then the fee grossed up, rounded up)."""
+    out = []
+    priya = lambda usdc_in, fee=3_000_000: (
+        Venue(100_000 * 10**6, 100_000 * 10**18, fee, None)
+        if usdc_in
+        else Venue(100_000 * 10**18, 100_000 * 10**6, fee, None)
+    )
+    for dname, zfo, usdc_in in (("usdc-in", usdc_is_currency0, True), ("mumb-in", not usdc_is_currency0, False)):
+        out_unit = 10**18 if usdc_in else 10**6  # the output token's unit
+        amount = EXACT_OUT_AMOUNT_UNITS * out_unit
+        state = vn.v1_demo_pool(usdc_is_currency0)
+        seg = vn.pool_segments(state, zfo, vn.MAX_TICK_RANGES, integer=True)[0]
+        seg_real = vn.pool_segments(state, zfo, vn.MAX_TICK_RANGES)[0]
+        three = [
+            Venue(d * 10**6, d * 10**18, f, None) if usdc_in else Venue(d * 10**18, d * 10**6, f, None)
+            for _, d, f in THREE_MAKERS
+        ]
+        sets = (
+            ("priya", [priya(usdc_in)], [None], None),
+            ("three", three, [None] * 3, None),
+            ("band", [priya(usdc_in)], [True], EXACT_OUT_BAND_BPS),
+            ("poolOptimal", [priya(usdc_in, 50_000_000)], [None], None),
+        )
+        for sname, makers, caps, band_bps in sets:
+            if caps[0] is not None:
+                cap = band_edge_out(state.tick, zfo, band_bps, makers[0].x, makers[0].y)
+                makers = [Venue(makers[0].x, makers[0].y, makers[0].fee_e9, cap)]
+            pool_v = Venue(seg.x, seg.y, seg.fee_e9, seg.cap_out)
+            alloc = wf.solve_exact_out_int([pool_v] + makers, amount)
+            assert sum(alloc) == amount and alloc[0] < seg.cap_out, (dname, sname)
+            pool_leg = vn.pool_swap_exact_out(state, alloc[0], zfo).amount_in
+            legs = [vn.cp_in_int(m, b) if b > 0 else 0 for m, b in zip(makers, alloc[1:])]
+            if sname == "band":
+                assert alloc[1] == makers[0].cap, "the band cap must bind"
+            if sname == "poolOptimal":
+                assert all(b == 0 for b in alloc[1:]), "pool-only must be optimal"
+            if sname in ("priya", "three"):
+                for b in alloc[1:]:
+                    assert b * 10_000 >= amount * 50, (dname, sname, b)  # MIN_LEG_BPS
+            segs_real = vn.pool_segments(state, zfo, vn.MAX_TICK_RANGES)
+            real = wf.solve_pool_exact_out(
+                segs_real, [Venue(m.x, m.y, m.fee_e9, m.cap) for m in makers], amount
+            )
+            out.append(
+                {
+                    "name": f"{dname}-{sname}",
+                    "amount": s(amount),
+                    "zeroForOne": zfo,
+                    "snapTick": state.tick,
+                    "bandBps": band_bps if band_bps is not None else 0,
+                    "poolOnlyIn": s(vn.pool_swap_exact_out(state, amount, zfo).amount_in),
+                    "makers": [dict(venue_json(m), name=THREE_MAKERS[i][0] if sname == "three" else "priya") for i, m in enumerate(makers)],
+                    "alloc": [s(a) for a in alloc],
+                    "perVenue": [s(pool_leg)] + [s(b) for b in legs],
+                    "totalInt": s(pool_leg + sum(legs)),
+                    "totalReal": real_str(real.total_in),
+                }
+            )
     return out
 
 

@@ -236,6 +236,44 @@ class V1Numbers(unittest.TestCase):
             per_depth = [a / m.x for a, m in zip(alloc[1:], makers)]
             self.assertEqual(max(range(3), key=lambda i: per_depth[i]), 1, c["name"])
 
+    def test_exact_out_vector(self):
+        """V2-08: each exact-output case sums to the amount, its integer allocations agree with the real-valued pool
+        solver to 1e-9 of the amount (the capped maker is pinned at its cap), the split costs no more than
+        pool-only (equal where the pool is optimal), and brute force over the pool/maker split cannot beat it by more
+        than 2 wei of rounding per leg."""
+        cases = gen_vectors.exact_out_cases(gen_vectors.V1_USDC_IS_CURRENCY0)
+        self.assertEqual(len(cases), 8)
+        for c in cases:
+            amount = int(c["amount"])
+            zfo = c["zeroForOne"]
+            makers = [venues.Venue(int(m["x"]), int(m["y"]), m["feeE9"], int(m["cap"])) for m in c["makers"]]
+            makers = [m._replace(cap=None) if m.cap >= 2**255 else m for m in makers]
+            state = venues.v1_demo_pool(gen_vectors.V1_USDC_IS_CURRENCY0)
+            segs = venues.pool_segments(state, zfo, venues.MAX_TICK_RANGES)
+            real = waterfill.solve_pool_exact_out(segs, makers, amount)
+            alloc = [int(a) for a in c["alloc"]]
+            self.assertEqual(sum(alloc), amount, c["name"])
+            for got, want in zip(alloc[1:], real.makers):
+                self.assertLessEqual(abs(Decimal(got) - want), Decimal(amount) / Decimal(10**9), c["name"])
+            total, pool_only = int(c["totalInt"]), int(c["poolOnlyIn"])
+            self.assertLessEqual(total, pool_only, c["name"])
+            if c["name"].endswith("poolOptimal"):
+                self.assertEqual(total, pool_only, c["name"])
+                self.assertTrue(all(a == 0 for a in alloc[1:]), c["name"])
+            else:
+                self.assertLess(total, pool_only, c["name"])
+            if c["name"].endswith("band"):
+                self.assertEqual(alloc[1], makers[0].cap, c["name"])
+            # No nearby split is cheaper by more than the rounding of its legs.
+            for d in (-10**6, -1000, -1, 1, 1000, 10**6):
+                b = alloc[1] + d
+                if len(alloc) != 2 or b < 0 or b > amount or (makers[0].cap is not None and b > makers[0].cap):
+                    continue
+                cost = venues.pool_swap_exact_out(state, amount - b, zfo).amount_in + (
+                    venues.cp_in_int(makers[0], b) if b else 0
+                )
+                self.assertGreaterEqual(cost + 4, total, (c["name"], d))
+
 
 class TickMath(unittest.TestCase):
     def test_known_values(self):
