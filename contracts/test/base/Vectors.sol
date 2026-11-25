@@ -109,6 +109,22 @@ library Vectors {
         uint256 totalInt;
     }
 
+    /// @dev V2-08: exact output on the v1 pool (`exactOut` in v1_demo.json), 990 output units. `makers[j]` is venue
+    ///      j + 1 priced from the maker's side (x = input token); `cap` is in OUTPUT units (the band case's cap is the
+    ///      real-number band edge, floored). `poolOnlyIn` and `totalInt` are input amounts.
+    struct ExactOutCase {
+        string name;
+        uint256 amount;
+        bool zeroForOne;
+        int256 snapTick;
+        uint256 bandBps;
+        uint256 poolOnlyIn;
+        VenueV[] makers;
+        uint256[] alloc;
+        uint256[] perVenue;
+        uint256 totalInt;
+    }
+
     // ------------------------------------------------------------------ files
 
     /// @notice The raw JSON of `file` (a name from this library).
@@ -238,6 +254,41 @@ library Vectors {
         c.amount = vm.parseJsonUint(json, string.concat(p, ".amount"));
         c.zeroForOne = vm.parseJsonBool(json, string.concat(p, ".zeroForOne"));
         c.poolOnlyOut = vm.parseJsonUint(json, string.concat(p, ".poolOnlyOut"));
+        c.alloc = vm.parseJsonUintArray(json, string.concat(p, ".alloc"));
+        c.perVenue = vm.parseJsonUintArray(json, string.concat(p, ".perVenue"));
+        c.totalInt = vm.parseJsonUint(json, string.concat(p, ".totalInt"));
+        uint256 n = _arrayLength(json, string.concat(p, ".makers"));
+        c.makers = new VenueV[](n);
+        for (uint256 k; k < n; k++) {
+            c.makers[k] = venue(json, string.concat(p, ".makers[", vm.toString(k), "]"));
+        }
+    }
+
+    /// @notice Number of `exactOut` cases in v1_demo.json (V2-08).
+    function exactOutCount(string memory json) internal view returns (uint256) {
+        return _arrayLength(json, ".exactOut");
+    }
+
+    /// @notice Number of `exactOutSafe` cases: the band cases with the chain's safe cap applied (V2-08, D-36).
+    function exactOutSafeCount(string memory json) internal view returns (uint256) {
+        return _arrayLength(json, ".exactOutSafe");
+    }
+
+    function exactOut(string memory json, uint256 i) internal view returns (ExactOutCase memory) {
+        return _exactOutAt(json, string.concat(".exactOut[", vm.toString(i), "]"));
+    }
+
+    function exactOutSafe(string memory json, uint256 i) internal view returns (ExactOutCase memory) {
+        return _exactOutAt(json, string.concat(".exactOutSafe[", vm.toString(i), "]"));
+    }
+
+    function _exactOutAt(string memory json, string memory p) private view returns (ExactOutCase memory c) {
+        c.name = vm.parseJsonString(json, string.concat(p, ".name"));
+        c.amount = vm.parseJsonUint(json, string.concat(p, ".amount"));
+        c.zeroForOne = vm.parseJsonBool(json, string.concat(p, ".zeroForOne"));
+        c.snapTick = vm.parseJsonInt(json, string.concat(p, ".snapTick"));
+        c.bandBps = vm.parseJsonUint(json, string.concat(p, ".bandBps"));
+        c.poolOnlyIn = vm.parseJsonUint(json, string.concat(p, ".poolOnlyIn"));
         c.alloc = vm.parseJsonUintArray(json, string.concat(p, ".alloc"));
         c.perVenue = vm.parseJsonUintArray(json, string.concat(p, ".perVenue"));
         c.totalInt = vm.parseJsonUint(json, string.concat(p, ".totalInt"));

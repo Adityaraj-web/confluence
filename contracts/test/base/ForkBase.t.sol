@@ -9,6 +9,7 @@ import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 import {MockMUMB} from "../../src/mocks/MockMUMB.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {ConfluenceSplitter} from "../../src/ConfluenceSplitter.sol";
+import {ConfluenceSplitterOut} from "../../src/ConfluenceSplitterOut.sol";
 
 /// @notice Shared fork setup. Every fork test extends this.
 abstract contract ForkBase is Test {
@@ -47,14 +48,15 @@ abstract contract ForkBase is Test {
         deal(USDC, trader, TRADER_USDC);
     }
 
-    /// @notice Deploys a `ConfluenceSplitter`, then mines a CREATE2 salt for exactly beforeSwap + beforeSwapReturnDelta
+    /// @notice Deploys the two splitters (`ConfluenceSplitter`, `ConfluenceSplitterOut`), then mines a CREATE2 salt for exactly beforeSwap + beforeSwapReturnDelta
     /// and deploys the v2 hook with it from this contract. setUp does not call it: v1 tests keep their own hook (PoolBase) and pay nothing for v2.
     function _deployHookV2() internal returns (ConfluenceHook h) {
         ConfluenceSplitter splitter = new ConfluenceSplitter();
+        ConfluenceSplitterOut splitterOut = new ConfluenceSplitterOut();
         uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG);
-        bytes memory args = abi.encode(IPoolManager(POOL_MANAGER), splitter);
+        bytes memory args = abi.encode(IPoolManager(POOL_MANAGER), splitter, splitterOut);
         (address expected, bytes32 salt) = HookMiner.find(address(this), flags, type(ConfluenceHook).creationCode, args);
-        h = new ConfluenceHook{salt: salt}(IPoolManager(POOL_MANAGER), splitter);
+        h = new ConfluenceHook{salt: salt}(IPoolManager(POOL_MANAGER), splitter, splitterOut);
         require(address(h) == expected, "ForkBase: v2 hook address mismatch");
     }
 

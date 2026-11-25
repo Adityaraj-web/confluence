@@ -147,6 +147,44 @@ library MakerVenue {
             caps(x, y, e.params.feeE9, real(tokenOut, e.maker, y), pmBalanceIn, snapTick, zeroForOne, e.params.bandBps);
     }
 
+    /// @notice The same makers for an EXACT-OUTPUT swap (V2-08, D-36). The caps are in OUTPUT units: `capMin` is the
+    ///         smallest and `capOut` the largest output of one fill that passes the guard, the output cap and the
+    ///         PoolManager's balance; `capIn` is the gross input of the fill at `capOut`.
+    /// @dev Built on `readOne`, so the exact-input read path is untouched: a maker `readOne` could not load (drift, hash
+    ///      mismatch, not shipped, docked) keeps that status; a loaded one gets its caps and status from `capsOut`. The
+    ///      checks `readOne` applies before the band (zero reserves, zero caps, a fee at or above 100%, reserves above
+    ///      the maths envelope) are the same in `capsOut`, so a status from either is the same status.
+    function readOut(
+        IPoolManager manager,
+        PoolKey memory key,
+        address guard,
+        Entry[] memory entries,
+        bool zeroForOne,
+        int24 snapTick,
+        int56 emaTickX
+    ) internal view returns (Maker[] memory out) {
+        out = read(manager, key, guard, entries, zeroForOne, snapTick, emaTickX);
+        address tokenIn = Currency.unwrap(zeroForOne ? key.currency0 : key.currency1);
+        address tokenOut = Currency.unwrap(zeroForOne ? key.currency1 : key.currency0);
+        // forge-lint: disable-next-line(calls-loop)
+        uint256 pmBalance = IERC20(tokenIn).balanceOf(address(manager));
+        for (uint256 i; i < out.length; i++) {
+            Maker memory m = out[i];
+            // `readOne` leaves the reserves zero for a maker it could not load.
+            if (m.x == 0 || m.y == 0) continue;
+            (m.status, m.capMin, m.capOut, m.capIn) = capsOut(
+                m.x,
+                m.y,
+                m.feeE9,
+                real(tokenOut, m.maker, m.y),
+                pmBalance,
+                snapTick,
+                zeroForOne,
+                entries[i].params.bandBps
+            );
+        }
+    }
+
     /// @notice The pure core of `readOne`: status and caps from reserves `x`, `y`, the fee, the real output cap
     ///         `outCap` (`real` of the output token), the PoolManager's balance of the input token, and the guard's
     ///         inputs (snapshot, direction, band). Never reverts.
@@ -194,6 +232,60 @@ library MakerVenue {
         net = a - Math.mulDiv(a, m.feeE9, B, Math.Rounding.Ceil);
         // out = floor(net * y / (x + net))  (XYCSwap.sol:22-25)
         out = net == 0 ? 0 : Math.mulDiv(net, m.y, m.x + net);
+    }
+
+    /// @notice Exact-output caps (V2-08, D-36): the smallest and largest OUTPUT `bMin <= bMax` such that every exact-output
+    ///         fill of `b` in between passes the guard, stays inside `outCap` (`real` of the output token) and costs no
+    ///         more gross input than `pmBalanceIn`; `aMax` is the gross input of the fill at `bMax`. Never reverts.
+    /// @dev SwapVM's exact output (`XYCSwap.sol:26-31`, `Fee.sol:92-96`): the guard sees the NET input
+    ///      `n(b) = ceil(b x / (y - b))` and the exact output `b`; the fee is grossed up afterwards, out of the guard's
+    ///      sight. With `N(b) = b x + y - b - 1` we have `n(b) <= N(b) / (y - b)` for every `b`, so the guard passes
+    ///      whenever (token0 in, `c = lo / 2^s`)  `2^s b (y - b) >= lo N(b)`  or (token1 in, `c = 2^s / (hi + 1)`)
+    ///      `(hi + 1) b (y - b) > 2^s N(b)`. Both differences are concave quadratics in `b`, so if they hold at `bMin` and
+    ///      `bMax` they hold for every `b` between. The ends are placed from the real edge `b_r = y - c x` with a margin
+    ///      `m = 4 ceil(c y / b_r) + 2` (`bMin = m`, `bMax = b_r - m`; first-order roots, times four) and verified
+    ///      exactly in 512 bits; a miss gives `SKIP_BAND`, so the factor of four only decides liquidity lost, never
+    ///      safety. Lowering `bMax` for the other caps keeps the proof (concavity). The PoolManager cap is the output
+    ///      of an exact-input fill of `pmBalanceIn`: its exact-output gross is at most `pmBalanceIn`, and gross rises
+    ///      with `b`.
+    function capsOut(
+        uint256 x,
+        uint256 y,
+        uint32 feeE9,
+        uint256 outCap,
+        uint256 pmBalanceIn,
+        int24 snapTick,
+        bool zeroIn,
+        uint16 bandBps
+    ) internal pure returns (Status status, uint256 bMin, uint256 bMax, uint256 aMax) {
+        if (feeE9 >= B || x > MAX_AMOUNT || y > MAX_AMOUNT) return (Status.SKIP_MATH, 0, 0, 0);
+        if (x == 0 || y == 0 || outCap == 0 || pmBalanceIn == 0) return (Status.SKIP_UNDERFUNDED, 0, 0, 0);
+
+        Band memory band = _band(snapTick, zeroIn, bandBps);
+        if (!_startInBand(band, x, y)) return (Status.SKIP_BAND, 0, 0, 0);
+        bool ok;
+        (ok, bMin, bMax) = _bandRangeOut(band, x, y);
+        if (!ok) return (Status.SKIP_BAND, 0, 0, 0);
+
+        Maker memory m = _maker(x, y, feeE9);
+        (, uint256 bPm) = quoteExactIn(m, Math.min(pmBalanceIn, MAX_AMOUNT));
+        uint256 other = Math.min(Math.min(outCap, y - 1), bPm);
+        bMax = Math.min(bMax, other);
+        if (bMax < bMin) {
+            return (other < bMin ? Status.SKIP_UNDERFUNDED : Status.SKIP_BAND, 0, 0, 0);
+        }
+        (, aMax) = quoteExactOut(m, bMax);
+    }
+
+    /// @notice Exact input of a fill of output `b` on this maker (`b < y`): XYC rounded up, then the fee grossed up,
+    ///         rounded up. Returns the net input too. Equals what SwapVM computes, to the wei. For `b >= y` returns the
+    ///         maximum (no such fill exists).
+    function quoteExactOut(Maker memory m, uint256 b) internal pure returns (uint256 net, uint256 gross) {
+        if (b >= m.y) return (type(uint256).max, type(uint256).max);
+        // net = ceil(b x / (y - b))  (XYCSwap.sol:28-31)
+        net = Math.mulDiv(b, m.x, m.y - b, Math.Rounding.Ceil);
+        // gross = net + ceil(net fee / (1e9 - fee))  (Fee.sol:95)
+        gross = net + Math.mulDiv(net, m.feeE9, B - m.feeE9, Math.Rounding.Ceil);
     }
 
     /// @notice The band predicate exactly as `BandGuardV2` evaluates it on a fill with net input `net` and output
@@ -335,6 +427,37 @@ library MakerVenue {
         uint256 q = _mulDivUp(num, n, den);
         if (q == type(uint256).max) return false;
         return q + 1 <= Math.mulDiv(n, y, x + n);
+    }
+
+    /// @dev The exact-output ends `[bMin, bMax]` for a band (see `capsOut`): placed from the real edge, then verified.
+    function _bandRangeOut(Band memory b, uint256 x, uint256 y)
+        private
+        pure
+        returns (bool ok, uint256 bMin, uint256 bMax)
+    {
+        (uint256 num, uint256 den) = b.zeroIn ? (b.lo, uint256(1) << b.shift) : (uint256(1) << b.shift, b.hi + 1);
+        uint256 cx = _mulDivUp(num, x, den);
+        if (cx >= y) return (false, 0, 0);
+        uint256 edge = y - cx; // floor of the real edge b_r = y - c x
+        uint256 cy = _mulDivUp(num, y, den);
+        if (cy == type(uint256).max) return (false, 0, 0);
+        uint256 q = Math.ceilDiv(cy, edge);
+        // Near the top tick with a 1 to 3 wei maker, `c` is about 2^128 and `4 q + 2` would overflow: no room, no cap.
+        if (q > (type(uint256).max - 2) / 4) return (false, 0, 0);
+        uint256 m = 4 * q + 2;
+        if (m >= edge) return (false, 0, 0);
+        (bMin, bMax) = (m, edge - m);
+        ok = _okOut(b, x, y, bMin) && _okOut(b, x, y, bMax);
+    }
+
+    /// @dev The sufficient exact-output condition at `bb` (see `capsOut`), exact in 512 bits.
+    function _okOut(Band memory b, uint256 x, uint256 y, uint256 bb) private pure returns (bool) {
+        if (bb == 0 || bb >= y) return false;
+        uint256 w = bb * (y - bb); // < 2^254
+        uint256 n = bb * x + y - bb - 1; // < 2^256 for x, y <= MAX_AMOUNT
+        uint256 one = uint256(1) << b.shift;
+        if (b.zeroIn) return _mulLe(b.lo, n, one, w);
+        return !_mulLe(b.hi + 1, w, one, n);
     }
 
     /// @dev Largest gross input whose net is at most `n`: `net(a) = floor(a (1e9 - fee) / 1e9)`, so
