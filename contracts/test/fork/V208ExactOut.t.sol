@@ -220,6 +220,8 @@ contract V208BandCapOutTest is Test {
     /// @dev Named risk: the exact-output band cap passes BandGuardV2 for every fill in its range. Random tick, band,
     ///      fee, size and start price inside the band, both directions; the range's ends, their neighbours and four
     ///      pseudo-random fills in between are fed to the real guard.
+    /// forge-config: default.fuzz.runs = 5000
+    /// forge-config: default.fuzz.max-test-rejects = 200000
     function testFuzz_V208_bandCapOutPasses(
         int24 tickSeed,
         uint256 xSeed,
