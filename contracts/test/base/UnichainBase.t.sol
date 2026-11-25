@@ -15,6 +15,7 @@ import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {ConfluenceSplitter} from "../../src/ConfluenceSplitter.sol";
+import {ConfluenceSplitterOut} from "../../src/ConfluenceSplitterOut.sol";
 import {MockMUMB} from "../../src/mocks/MockMUMB.sol";
 import {StrategyLib} from "./StrategyLib.sol";
 
@@ -47,10 +48,11 @@ abstract contract UnichainBase is Test, StrategyLib {
         maker = makeAddr("maker");
 
         ConfluenceSplitter splitter = new ConfluenceSplitter();
+        ConfluenceSplitterOut splitterOut = new ConfluenceSplitterOut();
         uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG);
-        bytes memory args = abi.encode(manager, splitter);
+        bytes memory args = abi.encode(manager, splitter, splitterOut);
         (address expected, bytes32 salt) = HookMiner.find(address(this), flags, type(ConfluenceHook).creationCode, args);
-        hook = new ConfluenceHook{salt: salt}(manager, splitter);
+        hook = new ConfluenceHook{salt: salt}(manager, splitter, splitterOut);
         assertEq(address(hook), expected, "hook address");
 
         key = PoolKey({

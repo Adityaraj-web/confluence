@@ -23,6 +23,7 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {BandExceeded, TakerNotHook} from "../../src/BandGuardV2.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {ConfluenceSplitter, IConfluenceHookView, LegStatus, Plan} from "../../src/ConfluenceSplitter.sol";
+import {ConfluenceSplitterOut} from "../../src/ConfluenceSplitterOut.sol";
 import {SplitMath} from "../../src/libraries/SplitMath.sol";
 import {MakerVenue} from "../../src/libraries/MakerVenue.sol";
 import {PoolVenue} from "../../src/libraries/PoolVenue.sol";
@@ -463,43 +464,20 @@ contract V207SplitTest is SplitBase {
         assertEq(legs[0].status, LegStatus.FILLED, "filled");
     }
 
-    /// @dev Exact output stays pool-only and unchanged (V2-08): same deltas as with no makers, no maker moves, no
-    ///      ConfluenceSwap.
-    function test_V207_exactOutputUnchanged() public {
-        _initExact(keyV2);
-        M[] memory ms = _threeMakers();
-        for (uint256 d; d < 2; d++) {
-            bool zfo = d == 0;
-            int256 amountOut = int256(zfo ? 500 * MUMB_1 : 500 * USDC_1);
-            uint256 s = vm.snapshotState();
-            _unregisterAll(keyV2);
-            BalanceDelta ref = _swap(keyV2, trader, zfo, amountOut, "");
-            vm.revertToState(s);
-            Book memory b0 = _book(ms);
-            vm.recordLogs();
-            BalanceDelta got = _swap(keyV2, trader, zfo, amountOut, "");
-            (, bool emitted) = _legsFrom(vm.getRecordedLogs(), address(hookV2));
-            Book memory b1 = _book(ms);
-            assertEq(BalanceDelta.unwrap(got), BalanceDelta.unwrap(ref), "same deltas as pool-only");
-            assertFalse(emitted, "no ConfluenceSwap for exact output");
-            for (uint256 j; j < ms.length; j++) {
-                assertEq(b1.wallet[j][0], b0.wallet[j][0], "maker USDC unchanged");
-                assertEq(b1.wallet[j][1], b0.wallet[j][1], "maker MUMB unchanged");
-            }
-            vm.revertToState(s);
-        }
-    }
+    // V2-08 retired `test_V207_exactOutputUnchanged` (D-36): it asserted that exact output stays pool-only with no
+    // ConfluenceSwap, which V2-08 deliberately changes. V208ExactOut.t.sol covers exact output.
 
     // =====================================================================================================
     // The splitter is checked, not trusted (D-35)
     // =====================================================================================================
 
     function test_V207_constructorRejectsBadSplitter() public {
+        ConfluenceSplitterOut out = splitterOut;
         vm.expectRevert(ConfluenceHook.InvalidSplitter.selector);
-        new ConfluenceHook(manager, ConfluenceSplitter(address(0)));
+        new ConfluenceHook(manager, ConfluenceSplitter(address(0)), out);
         address noCode = makeAddr("noCode");
         vm.expectRevert(ConfluenceHook.InvalidSplitter.selector);
-        new ConfluenceHook(manager, ConfluenceSplitter(noCode));
+        new ConfluenceHook(manager, ConfluenceSplitter(noCode), out);
     }
 
     /// @dev Malformed returns and plans that fail each hook check: pool-only, every slot SKIP_PLAN, the real pool-only

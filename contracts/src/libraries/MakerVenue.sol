@@ -79,9 +79,8 @@ library MakerVenue {
         return Math.min(virtualBalance, Math.min(IERC20(token).balanceOf(maker), IERC20(token).allowance(maker, AQUA)));
     }
 
-    /// @notice All registered makers as venues for an EXACT-INPUT swap in the given direction. `snapTick` and
-    ///         `emaTickX` must be the anchor `BandGuardV2` reads via `anchorOfX` in the same swap (the post-update
-    ///         values).
+    /// @notice All registered makers as venues for a swap in the given direction. `snapTick` and `emaTickX` must be
+    ///         the anchor `BandGuardV2` reads via `anchorOfX` in the same swap (the post-update values).
     /// @dev Reads the PoolManager's balance of the input token once. Never reverts for registered makers.
     function read(
         IPoolManager manager,
@@ -91,42 +90,14 @@ library MakerVenue {
         bool zeroForOne,
         int24 snapTick,
         int56 emaTickX
-    ) internal view returns (Maker[] memory) {
-        return _readAll(manager, key, guard, entries, zeroForOne, snapTick, emaTickX, false);
-    }
-
-    /// @notice The same for an EXACT-OUTPUT swap (V2-08, D-36). The caps are in OUTPUT units: `capMin` is the smallest
-    ///         and `capOut` the largest output of one fill that passes the guard, the output cap and the PoolManager's
-    ///         balance; `capIn` is the gross input of the fill at `capOut`.
-    function readOut(
-        IPoolManager manager,
-        PoolKey memory key,
-        address guard,
-        Entry[] memory entries,
-        bool zeroForOne,
-        int24 snapTick,
-        int56 emaTickX
-    ) internal view returns (Maker[] memory) {
-        return _readAll(manager, key, guard, entries, zeroForOne, snapTick, emaTickX, true);
-    }
-
-    function _readAll(
-        IPoolManager manager,
-        PoolKey memory key,
-        address guard,
-        Entry[] memory entries,
-        bool zeroForOne,
-        int24 snapTick,
-        int56 emaTickX,
-        bool exactOut
-    ) private view returns (Maker[] memory out) {
+    ) internal view returns (Maker[] memory out) {
         uint256 n = Math.min(entries.length, MAX_MAKERS);
         out = new Maker[](n);
         address tokenIn = Currency.unwrap(zeroForOne ? key.currency0 : key.currency1);
         // forge-lint: disable-next-line(calls-loop)
         uint256 pmBalance = IERC20(tokenIn).balanceOf(address(manager));
         for (uint256 i; i < n; i++) {
-            out[i] = _readOne(manager, key, guard, entries[i], zeroForOne, snapTick, emaTickX, pmBalance, exactOut);
+            out[i] = readOne(manager, key, guard, entries[i], zeroForOne, snapTick, emaTickX, pmBalance);
         }
     }
 
@@ -140,21 +111,7 @@ library MakerVenue {
         int24 snapTick,
         int56 emaTickX,
         uint256 pmBalanceIn
-    ) internal view returns (Maker memory) {
-        return _readOne(manager, key, guard, e, zeroForOne, snapTick, emaTickX, pmBalanceIn, false);
-    }
-
-    function _readOne(
-        IPoolManager manager,
-        PoolKey memory key,
-        address guard,
-        Entry memory e,
-        bool zeroForOne,
-        int24 snapTick,
-        int56 emaTickX,
-        uint256 pmBalanceIn,
-        bool exactOut
-    ) private view returns (Maker memory m) {
+    ) internal view returns (Maker memory m) {
         m.maker = e.maker;
         m.strategyHash = e.strategyHash;
         // The drift check needs no external call, so it goes first.
@@ -186,13 +143,45 @@ library MakerVenue {
         m.x = x;
         m.y = y;
         m.feeE9 = e.params.feeE9;
-        uint256 outCap = real(tokenOut, e.maker, y);
-        if (exactOut) {
-            (m.status, m.capMin, m.capOut, m.capIn) =
-                capsOut(x, y, e.params.feeE9, outCap, pmBalanceIn, snapTick, zeroForOne, e.params.bandBps);
-        } else {
-            (m.status, m.capMin, m.capIn, m.capOut) =
-                caps(x, y, e.params.feeE9, outCap, pmBalanceIn, snapTick, zeroForOne, e.params.bandBps);
+        (m.status, m.capMin, m.capIn, m.capOut) =
+            caps(x, y, e.params.feeE9, real(tokenOut, e.maker, y), pmBalanceIn, snapTick, zeroForOne, e.params.bandBps);
+    }
+
+    /// @notice The same makers for an EXACT-OUTPUT swap (V2-08, D-36). The caps are in OUTPUT units: `capMin` is the
+    ///         smallest and `capOut` the largest output of one fill that passes the guard, the output cap and the
+    ///         PoolManager's balance; `capIn` is the gross input of the fill at `capOut`.
+    /// @dev Built on `readOne`, so the exact-input read path is untouched: a maker `readOne` could not load (drift, hash
+    ///      mismatch, not shipped, docked) keeps that status; a loaded one gets its caps and status from `capsOut`. The
+    ///      checks `readOne` applies before the band (zero reserves, zero caps, a fee at or above 100%, reserves above
+    ///      the maths envelope) are the same in `capsOut`, so a status from either is the same status.
+    function readOut(
+        IPoolManager manager,
+        PoolKey memory key,
+        address guard,
+        Entry[] memory entries,
+        bool zeroForOne,
+        int24 snapTick,
+        int56 emaTickX
+    ) internal view returns (Maker[] memory out) {
+        out = read(manager, key, guard, entries, zeroForOne, snapTick, emaTickX);
+        address tokenIn = Currency.unwrap(zeroForOne ? key.currency0 : key.currency1);
+        address tokenOut = Currency.unwrap(zeroForOne ? key.currency1 : key.currency0);
+        // forge-lint: disable-next-line(calls-loop)
+        uint256 pmBalance = IERC20(tokenIn).balanceOf(address(manager));
+        for (uint256 i; i < out.length; i++) {
+            Maker memory m = out[i];
+            // `readOne` leaves the reserves zero for a maker it could not load.
+            if (m.x == 0 || m.y == 0) continue;
+            (m.status, m.capMin, m.capOut, m.capIn) = capsOut(
+                m.x,
+                m.y,
+                m.feeE9,
+                real(tokenOut, m.maker, m.y),
+                pmBalance,
+                snapTick,
+                zeroForOne,
+                entries[i].params.bandBps
+            );
         }
     }
 

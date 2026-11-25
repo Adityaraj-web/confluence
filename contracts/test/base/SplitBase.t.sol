@@ -23,6 +23,7 @@ import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {BandExceeded, TakerNotHook} from "../../src/BandGuardV2.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {ConfluenceSplitter, IConfluenceHookView, LegStatus, Plan} from "../../src/ConfluenceSplitter.sol";
+import {ConfluenceSplitterOut} from "../../src/ConfluenceSplitterOut.sol";
 import {SplitMath} from "../../src/libraries/SplitMath.sol";
 import {MakerVenue} from "../../src/libraries/MakerVenue.sol";
 import {PoolVenue} from "../../src/libraries/PoolVenue.sol";
@@ -164,6 +165,7 @@ abstract contract SplitBase is RegistryBase, V207Helpers {
     uint256 internal constant M3_TARGET = 991549823315669231761; // v1's hinted best (D-21)
 
     ConfluenceSplitter internal splitter;
+    ConfluenceSplitterOut internal splitterOut;
 
     struct Run {
         uint256 paid;
@@ -192,6 +194,7 @@ abstract contract SplitBase is RegistryBase, V207Helpers {
     function setUp() public override {
         super.setUp();
         splitter = hookV2.splitter();
+        splitterOut = hookV2.splitterOut();
         vm.prank(deployer);
         mumb.mint(trader, 100_000e18);
     }

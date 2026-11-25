@@ -28,6 +28,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
 import {BandGuardV2} from "./BandGuardV2.sol";
 import {ConfluenceSplitter, LegStatus, Plan} from "./ConfluenceSplitter.sol";
+import {ConfluenceSplitterOut} from "./ConfluenceSplitterOut.sol";
 import {AnchorLib} from "./libraries/AnchorLib.sol";
 import {MakerVenue} from "./libraries/MakerVenue.sol";
 import {StrategyTemplate} from "./libraries/StrategyTemplate.sol";
@@ -63,7 +64,7 @@ contract ConfluenceHook is IHooks {
     error NativeCurrencyUnsupported();
     /// @dev A fee above `MAX_LP_FEE` that is not the dynamic-fee flag.
     error InvalidPoolFee(uint24 fee);
-    /// @dev The constructor's splitter is the zero address or has no code.
+    /// @dev A constructor splitter is the zero address or has no code, or both are the same address.
     error InvalidSplitter();
     /// @dev A tick spacing outside v4's [1, 32767].
     error InvalidTickSpacing(int24 tickSpacing);
@@ -118,7 +119,7 @@ contract ConfluenceHook is IHooks {
         uint8 status;
     }
 
-    /// @notice One exact-input swap on a pool with registered makers or none (ARCHITECTURE-v2 section 7). `legs` has one
+    /// @notice One swap, exact input or exact output (`exactIn`), on a pool with registered makers or none (ARCHITECTURE-v2 section 7). `legs` has one
     /// entry per registry slot, in slot order. `sqrtPriceX96`, `liquidity` and `swapFee` are the pool's before the
     /// swap; `swapFee` is v4's combined fee for the direction, in pips.
     event ConfluenceSwap(
@@ -141,8 +142,10 @@ contract ConfluenceHook is IHooks {
     IPoolManager public immutable poolManager;
     /// @notice The guard every registered strategy ends with. Deployed by this hook's constructor.
     BandGuardV2 public immutable bandGuard;
-    /// @notice The contract that plans each split (D-35). Immutable; verifying this hook includes verifying it.
+    /// @notice The contract that plans each exact-input split (D-35). Immutable; verifying this hook includes verifying it.
     ConfluenceSplitter public immutable splitter;
+    /// @notice The contract that plans each exact-output split (D-36, amends D-35). Immutable, likewise.
+    ConfluenceSplitterOut public immutable splitterOut;
     /// @notice Half-life of the EMA, in seconds (V2-11 may change it with a DECISIONS entry).
     uint256 public constant EMA_HALF_LIFE = 60;
 
@@ -177,8 +180,9 @@ contract ConfluenceHook is IHooks {
     /// @dev Taker data: ten 16-bit slice indexes, each 32 (only the 32-byte threshold), and the flags.
     /// (2^160 - 1) / (2^16 - 1) is 1 in each of the ten 16-bit fields.
     uint160 private constant _TAKER_SLICES = (type(uint160).max / type(uint16).max) * 32;
-    uint16 private constant _TAKER_FLAGS = TakerTraitsLib.IS_EXACT_IN_BIT_FLAG
-        | TakerTraitsLib.IS_STRICT_THRESHOLD_BIT_FLAG | TakerTraitsLib.USE_TRANSFER_FROM_AND_AQUA_PUSH_FLAG;
+    uint16 private constant _TAKER_FLAGS_OUT =
+        TakerTraitsLib.IS_STRICT_THRESHOLD_BIT_FLAG | TakerTraitsLib.USE_TRANSFER_FROM_AND_AQUA_PUSH_FLAG;
+    uint16 private constant _TAKER_FLAGS = TakerTraitsLib.IS_EXACT_IN_BIT_FLAG | _TAKER_FLAGS_OUT;
 
     /// @dev One packed slot per pool (slot 0 of this contract is the mapping's base). Keep it first: V2-03's tests
     /// read it with `vm.load`.
@@ -188,12 +192,17 @@ contract ConfluenceHook is IHooks {
 
     /// @param _poolManager The v4 PoolManager.
     /// @param _splitter The deployed `ConfluenceSplitter` (D-35).
+    /// @param _splitterOut The deployed `ConfluenceSplitterOut` (D-36).
     /// @dev Reverts unless the deployed address carries exactly the flags in `getHookPermissions`, and
-    /// `InvalidSplitter` for a splitter with no code.
-    constructor(IPoolManager _poolManager, ConfluenceSplitter _splitter) {
-        if (address(_splitter).code.length == 0) revert InvalidSplitter();
+    /// `InvalidSplitter` for a splitter with no code or the same address given twice.
+    constructor(IPoolManager _poolManager, ConfluenceSplitter _splitter, ConfluenceSplitterOut _splitterOut) {
+        if (
+            address(_splitter).code.length == 0 || address(_splitterOut).code.length == 0
+                || address(_splitter) == address(_splitterOut)
+        ) revert InvalidSplitter();
         poolManager = _poolManager;
         splitter = _splitter;
+        splitterOut = _splitterOut;
         bandGuard = new BandGuardV2();
         Hooks.validateHookPermissions(IHooks(address(this)), getHookPermissions());
     }
@@ -328,14 +337,15 @@ contract ConfluenceHook is IHooks {
         return _slots[poolId];
     }
 
-    /// @notice Called by the PoolManager before a swap. Records the anchor on the first swap of a block, then, for
-    /// exact input, splits the swap between the pool and the registered makers (ARCHITECTURE-v2 section 2): the
-    /// splitter plans, this hook checks the plan, takes the makers' total input from the PoolManager, fills each leg
-    /// through the canonical router as the taker inside try/catch, settles back what did not fill and settles the
-    /// output, and returns the filled amounts as its delta. The pool fills the rest. Never an LP-fee override.
-    /// @dev Only the PoolManager may call. `hookData` and the sender are ignored. Exact output, and an input above
-    /// int128 max, are pool-only and emit no `ConfluenceSwap` (V2-08). No maker can make the swap fail: a failed
-    /// splitter or a plan that fails a check gives pool-only, a failed leg is settled back (D-35).
+    /// @notice Called by the PoolManager before a swap. Records the anchor on the first swap of a block, then splits
+    /// the swap between the pool and the registered makers (ARCHITECTURE-v2 section 2), for exact input and for exact
+    /// output: the splitter plans, this hook checks the plan, takes the makers' total input from the PoolManager, fills
+    /// each leg through the canonical router as the taker inside try/catch, settles back what did not fill and settles
+    /// the output, and returns the filled amounts as its delta: (input, -output) for exact input, (-output, input) for
+    /// exact output (specified first, D-36). The pool fills the rest. Never an LP-fee override.
+    /// @dev Only the PoolManager may call. `hookData` and the sender are ignored. An amount of 0, or beyond int128 max
+    /// either way, is pool-only and emits no `ConfluenceSwap`. No maker can make the swap fail: a failed splitter or a
+    /// plan that fails a check gives pool-only, a failed leg is settled back (D-35).
     function beforeSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata)
         external
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -349,35 +359,37 @@ contract ConfluenceHook is IHooks {
             emit AnchorUpdated(id, a.snapTick, a.emaTickX, a.lastTimestamp);
         }
         BeforeSwapDelta delta = BeforeSwapDeltaLibrary.ZERO_DELTA;
+        int256 spec = params.amountSpecified;
         // casting to 'int256' is safe: int128 max fits
         // forge-lint: disable-next-line(unsafe-typecast)
-        if (params.amountSpecified < 0 && params.amountSpecified >= -int256(_MAX_INT128)) {
+        if (spec != 0 && spec >= -int256(_MAX_INT128) && spec <= int256(_MAX_INT128)) {
             delta = _split(id, key, params, a);
         }
         return (IHooks.beforeSwap.selector, delta, 0);
     }
 
-    /// @dev One exact-input swap: plan, check, legs, event. Returns the filled input and output as the delta.
+    /// @dev One swap: plan, check, legs, event. Returns the filled input and output as the delta.
     function _split(PoolId id, PoolKey calldata key, IPoolManager.SwapParams calldata params, AnchorLib.Anchor memory a)
         private
         returns (BeforeSwapDelta)
     {
-        // casting to 'uint256' is safe: beforeSwap checked -int128 max <= amountSpecified < 0
+        bool exactIn = params.amountSpecified < 0;
+        // casting to 'uint256' is safe: beforeSwap checked amountSpecified is nonzero and within int128
         // forge-lint: disable-next-line(unsafe-typecast)
-        uint256 amount = uint256(-params.amountSpecified);
+        uint256 amount = exactIn ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
         Slot[] storage slots = _slots[id];
         uint256 n = Math.min(slots.length, MAX_STRATEGIES);
         Leg[] memory legs = new Leg[](n);
         uint256 sumIn = 0;
         uint256 sumOut = 0;
         if (n > 0) {
-            (uint8 code, Plan memory p) = _plan(key, params, amount, a, n);
+            (uint8 code, Plan memory p) = _plan(key, params, amount, a, n, exactIn);
             for (uint256 i; i < n; i++) {
                 // casting to 'uint8' is safe: `_checkPlan` bounds every status by LegStatus.MAX_CODE
                 // forge-lint: disable-next-line(unsafe-typecast)
                 legs[i] = Leg(slots[i].strategyHash, 0, 0, code == LegStatus.FILLED ? uint8(p.status[i]) : code);
             }
-            if (code == LegStatus.FILLED) (sumIn, sumOut) = _legs(key, params.zeroForOne, slots, p, legs);
+            if (code == LegStatus.FILLED) (sumIn, sumOut) = _legs(key, params.zeroForOne, slots, p, legs, exactIn);
         }
         (uint160 sqrtP,, uint24 protocolFee, uint24 lpFee) = poolManager.getSlot0(id);
         uint16 pf = params.zeroForOne ? protocolFee.getZeroForOneFee() : protocolFee.getOneForZeroFee();
@@ -386,7 +398,7 @@ contract ConfluenceHook is IHooks {
         emit ConfluenceSwap(
             id,
             params.zeroForOne,
-            true,
+            exactIn,
             params.amountSpecified,
             a.snapTick,
             AnchorLib.emaTick(a.emaTickX),
@@ -396,10 +408,10 @@ contract ConfluenceHook is IHooks {
             legs
         );
         // forge-lint: disable-end(reentrancy-events)
-        return
-            toBeforeSwapDelta(
-                SafeCast.toInt128(SafeCast.toInt256(sumIn)), -SafeCast.toInt128(SafeCast.toInt256(sumOut))
-            );
+        int128 inDelta = SafeCast.toInt128(SafeCast.toInt256(sumIn));
+        int128 outDelta = -SafeCast.toInt128(SafeCast.toInt256(sumOut));
+        // The specified side first: the input for exact input, the output for exact output (Hooks.sol:272-278).
+        return exactIn ? toBeforeSwapDelta(inDelta, outDelta) : toBeforeSwapDelta(outDelta, inDelta);
     }
 
     /// @dev Calls the splitter with a gas cap (low-level, so malformed data cannot revert), then checks the plan.
@@ -409,16 +421,23 @@ contract ConfluenceHook is IHooks {
         IPoolManager.SwapParams calldata params,
         uint256 amount,
         AnchorLib.Anchor memory a,
-        uint256 n
+        uint256 n,
+        bool exactIn
     ) private view returns (uint8 code, Plan memory p) {
         uint256 g = gasleft();
         if (g < GAS_RESERVE + MIN_LEG_GAS) return (LegStatus.SKIP_GAS, p);
-        bytes memory data = abi.encodeCall(
-            ConfluenceSplitter.planExactIn,
-            (key, params.zeroForOne, params.sqrtPriceLimitX96, amount, a.snapTick, a.emaTickX)
+        // The two plan functions take the same arguments; only the selector differs.
+        bytes memory data = abi.encodeWithSelector(
+            exactIn ? ConfluenceSplitter.planExactIn.selector : ConfluenceSplitterOut.planExactOut.selector,
+            key,
+            params.zeroForOne,
+            params.sqrtPriceLimitX96,
+            amount,
+            a.snapTick,
+            a.emaTickX
         );
         bytes memory ret = new bytes(PLAN_BYTES);
-        address target = address(splitter);
+        address target = exactIn ? address(splitter) : address(splitterOut);
         uint256 gasCap = Math.min(g - GAS_RESERVE, PLAN_GAS_CAP);
         uint256 len = PLAN_BYTES;
         bool ok;
@@ -432,41 +451,58 @@ contract ConfluenceHook is IHooks {
         // Exactly PLAN_BYTES of static words: this decode cannot revert.
         p = abi.decode(ret, (Plan));
         address tokenIn = Currency.unwrap(params.zeroForOne ? key.currency0 : key.currency1);
-        if (!_checkPlan(p, tokenIn, amount, n)) return (LegStatus.SKIP_PLAN, p);
+        if (!_checkPlan(p, tokenIn, amount, n, exactIn)) return (LegStatus.SKIP_PLAN, p);
         return (LegStatus.FILLED, p);
     }
 
-    /// @dev The hook's own checks on a plan (D-35): valid codes; each leg for a registered slot, within the maker's
-    /// [capMin, capIn] as read and at least `MIN_LEG_BPS`; at most `MAX_LEGS`; the legs and the pool's share sum to the
-    /// amount; the legs' total within the PoolManager's balance of the input token (read here); outputs within int128;
-    /// no pool share past a truncated walk; and the split's quoted output at least pool-only's plus the tail bound.
-    /// Every operation is bounded so that no plan can make it revert.
-    function _checkPlan(Plan memory p, address tokenIn, uint256 amount, uint256 n) private view returns (bool) {
-        uint256 sumIn = 0;
-        uint256 sumOut = 0;
+    /// @dev The hook's own checks on a plan (D-35, D-36): valid codes; each leg for a registered slot, within the maker's
+    /// [capMin, capIn] as read and at least `MIN_LEG_BPS`, in the swap's specified units (input for exact input, output
+    /// for exact output); at most `MAX_LEGS`; the legs and the pool's share sum to the amount; the legs' total input
+    /// within the PoolManager's balance of the input token (read here); the other side within int128; no pool share past
+    /// a truncated walk, and for exact output no plan when the pool is short of the amount at a hard end; and the
+    /// split's quoted other side no worse than pool-only's plus the tail bound (at least the output for exact input, at
+    /// most the input for exact output). Every operation is bounded so that no plan can make it revert.
+    function _checkPlan(Plan memory p, address tokenIn, uint256 amount, uint256 n, bool exactIn)
+        private
+        view
+        returns (bool)
+    {
+        uint256 sumSp = 0;
+        uint256 sumOt = 0;
         uint256 count = 0;
         for (uint256 i; i < MakerVenue.MAX_MAKERS; i++) {
-            uint256 x = p.amountIn[i];
+            (uint256 sp, uint256 ot) = exactIn ? (p.amountIn[i], p.amountOut[i]) : (p.amountOut[i], p.amountIn[i]);
             if (i < n && p.status[i] > LegStatus.MAX_CODE) return false;
-            if (x == 0) continue;
-            if (i >= n || x > amount || x < p.capMin[i] || x > p.capIn[i]) return false;
-            if (x * _BPS < amount * MIN_LEG_BPS || p.amountOut[i] > _MAX_INT128) return false;
+            if (sp == 0) {
+                if (ot != 0 && !exactIn) return false;
+                continue;
+            }
+            if (i >= n || sp > amount || sp < p.capMin[i] || sp > p.capIn[i]) return false;
+            if (sp * _BPS < amount * MIN_LEG_BPS || ot > _MAX_INT128 || (ot == 0 && !exactIn)) return false;
             count++;
-            sumIn += x;
-            sumOut += p.amountOut[i];
+            sumSp += sp;
+            sumOt += ot;
         }
         if (count == 0) return true;
-        if (count > MAX_LEGS || sumIn > amount || p.poolIn != amount - sumIn || sumOut > _MAX_INT128) return false;
+        if (count > MAX_LEGS || sumSp > amount || p.poolIn != amount - sumSp || sumOt > _MAX_INT128) return false;
         // forge-lint: disable-next-line(calls-loop)
-        if (sumIn > IERC20(tokenIn).balanceOf(address(poolManager))) return false;
+        if ((exactIn ? sumSp : sumOt) > IERC20(tokenIn).balanceOf(address(poolManager))) return false;
         if (p.poolOut > _MAX_INT128 || p.poolOnlyOut > _MAX_INT128 || p.tail > _MAX_INT128) return false;
         if (p.truncated != 0 && p.poolIn > p.walked) return false;
-        return p.poolOut + sumOut >= p.poolOnlyOut + p.tail;
+        if (exactIn) return p.poolOut + sumOt >= p.poolOnlyOut + p.tail;
+        return (p.truncated != 0 || p.walked >= amount) && p.poolOut + sumOt <= p.poolOnlyOut + p.tail;
     }
 
     /// @dev Runs the planned legs. Takes their total input once, fills each through the router, then settles back
     /// what did not fill and settles the output received. `legs` holds one entry per slot with the plan's codes.
-    function _legs(PoolKey calldata key, bool zeroForOne, Slot[] storage slots, Plan memory p, Leg[] memory legs)
+    function _legs(
+        PoolKey calldata key,
+        bool zeroForOne,
+        Slot[] storage slots,
+        Plan memory p,
+        Leg[] memory legs,
+        bool exactIn
+    )
         private
         returns (uint256 sumIn, uint256 sumOut)
     {
@@ -489,7 +525,7 @@ contract ConfluenceHook is IHooks {
         for (uint256 i; i < n; i++) {
             uint256 x = p.amountIn[i];
             if (x == 0) continue;
-            (uint8 status, uint256 out) = _fill(key, slots[i], cIn, cOut, x, p.amountOut[i]);
+            (uint8 status, uint256 out) = _fill(key, slots[i], cIn, cOut, x, p.amountOut[i], exactIn);
             legs[i].status = status;
             if (status == LegStatus.FILLED) {
                 (legs[i].amountIn, legs[i].amountOut) = (x, out);
@@ -503,12 +539,19 @@ contract ConfluenceHook is IHooks {
     }
 
     /// @dev One leg: the order rebuilt from the slot (its hash must still be the registered one), `GAS_RESERVE` kept
-    /// back, exact approval, the router call inside try/catch with a strict threshold of the planned output, approval
-    /// reset to 0. The revert data is not copied (zero of the 256 bytes the spec allows).
-    function _fill(PoolKey calldata key, Slot storage s, Currency cIn, Currency cOut, uint256 x, uint256 out)
-        private
-        returns (uint8 status, uint256 got)
-    {
+    /// back, exact approval of the leg's gross input `x`, the router call inside try/catch, approval reset to 0. Exact
+    /// input swaps `x` with a strict threshold of the planned output `out`; exact output swaps `out` with a strict
+    /// threshold of the planned input `x`: either way the router takes exactly `x` and gives exactly `out`, or reverts.
+    /// The revert data is not copied (zero of the 256 bytes the spec allows).
+    function _fill(
+        PoolKey calldata key,
+        Slot storage s,
+        Currency cIn,
+        Currency cOut,
+        uint256 x,
+        uint256 out,
+        bool exactIn
+    ) private returns (uint8 status, uint256 got) {
         ISwapVM.Order memory o = StrategyTemplate.order(
             s.maker, StrategyTemplate.program(s.params, poolManager, key, address(bandGuard))
         );
@@ -520,7 +563,7 @@ contract ConfluenceHook is IHooks {
         status = LegStatus.SKIP_REVERT;
         // forge-lint: disable-start(calls-loop)
         try ISwapVM(ROUTER).swap{gas: Math.min(g - GAS_RESERVE, LEG_GAS_CAP)}(
-            o, Currency.unwrap(cIn), Currency.unwrap(cOut), x, _takerData(out)
+            o, Currency.unwrap(cIn), Currency.unwrap(cOut), exactIn ? x : out, _takerData(exactIn, exactIn ? out : x)
         ) returns (
             uint256, uint256 amountOut, bytes32
         ) {
@@ -530,13 +573,14 @@ contract ConfluenceHook is IHooks {
         tokenIn.forceApprove(ROUTER, 0);
     }
 
-    /// @dev Exact input, strict threshold `out` (the fill must give exactly the planned output), the input pulled from
-    /// this hook and pushed to the maker through Aqua, the output to this hook, no deadline, hooks or callbacks.
-    /// This is `TakerTraitsLib.build` for those arguments (`TakerTraits.sol:105-160`), written out to save code size
-    /// (D-35): the ten slice indexes all end at the 32-byte threshold, then the flags, then the threshold. V2-07's
-    /// mocked-router tests match the hook's calldata against `TakerTraitsLib.build` byte for byte.
-    function _takerData(uint256 out) private pure returns (bytes memory) {
-        return abi.encodePacked(_TAKER_SLICES, _TAKER_FLAGS, out);
+    /// @dev A strict threshold `threshold` (exact input: the planned output the fill must give exactly; exact output:
+    /// the planned input it must take exactly), the input pulled from this hook and pushed to the maker through Aqua,
+    /// the output to this hook, no deadline, hooks or callbacks; the exact-input flag only for exact input. This is
+    /// `TakerTraitsLib.build` for those arguments (`TakerTraits.sol:105-160`), written out to save code size (D-35): the
+    /// ten slice indexes all end at the 32-byte threshold, then the flags, then the threshold. The tests' mocked-router
+    /// calls match the hook's calldata against `TakerTraitsLib.build` byte for byte, in both modes.
+    function _takerData(bool exactIn, uint256 threshold) private pure returns (bytes memory) {
+        return abi.encodePacked(_TAKER_SLICES, exactIn ? _TAKER_FLAGS : _TAKER_FLAGS_OUT, threshold);
     }
 
     /// @dev Static key checks, then that the pool exists. Returns the pool id.

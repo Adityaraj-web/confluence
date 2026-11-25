@@ -166,15 +166,6 @@ contract ConfluenceSplitter {
         }
     }
 
-    /// @notice STUB (V2-08 red step): exact-output plan; for now pool-only.
-    function planExactOut(PoolKey calldata, bool, uint160, uint256 amountOut, int24, int56)
-        external
-        pure
-        returns (Plan memory p)
-    {
-        p.poolIn = amountOut;
-    }
-
     /// @dev The live makers as SplitMath venues, capped at `capIn`, and their slot indices.
     function _venues(MakerVenue.Maker[] memory ms, bool[] memory live)
         private

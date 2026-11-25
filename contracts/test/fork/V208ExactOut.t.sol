@@ -21,7 +21,8 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
 import {BandGuardV2} from "../../src/BandGuardV2.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
-import {LegStatus, Plan} from "../../src/ConfluenceSplitter.sol";
+import {ConfluenceSplitter, LegStatus, Plan} from "../../src/ConfluenceSplitter.sol";
+import {ConfluenceSplitterOut} from "../../src/ConfluenceSplitterOut.sol";
 import {MakerVenue} from "../../src/libraries/MakerVenue.sol";
 import {PoolVenue} from "../../src/libraries/PoolVenue.sol";
 import {StrategyTemplate} from "../../src/libraries/StrategyTemplate.sol";
@@ -344,7 +345,7 @@ contract V208ExactOutTest is SplitBase {
 
     function _planOut(PoolKey memory k, bool zfo, uint256 b) internal view returns (Plan memory) {
         (int24 s, int56 e,) = hookV2.anchorOfX(k.toId());
-        return splitter.planExactOut(k, zfo, _lim(zfo), b, s, e);
+        return splitterOut.planExactOut(k, zfo, _lim(zfo), b, s, e);
     }
 
     /// @dev Exact books for an exact-output swap: the trader got `b`, paid `r.paid`; the PoolManager gave the pool's
@@ -423,7 +424,7 @@ contract V208ExactOutTest is SplitBase {
         string memory ctx
     ) internal {
         uint256 s = vm.snapshotState();
-        vm.mockCall(address(splitter), abi.encodeWithSelector(splitter.planExactOut.selector), ret);
+        vm.mockCall(address(splitterOut), abi.encodeWithSelector(splitterOut.planExactOut.selector), ret);
         Book memory b0 = _book(ms);
         Run memory r = _runOut(keyV2, zfo, b);
         _assertBooksOut(b0, _book(ms), zfo, b, r, ms);
@@ -579,7 +580,7 @@ contract V208ExactOutTest is SplitBase {
         Plan memory q = _copy(_planOut(keyV2, c.zeroForOne, c.amount));
         assertGt(q.amountIn[0], 0, "premise: a leg is planned");
         q.amountIn[0] = below ? q.amountIn[0] - 1 : q.amountIn[0] + 1; // the router needs exactly a_i
-        vm.mockCall(address(splitter), abi.encodeWithSelector(splitter.planExactOut.selector), abi.encode(q));
+        vm.mockCall(address(splitterOut), abi.encodeWithSelector(splitterOut.planExactOut.selector), abi.encode(q));
         Book memory b0 = _book(ms);
         Run memory r = _runOut(keyV2, c.zeroForOne, c.amount);
         _assertBooksOut(b0, _book(ms), c.zeroForOne, c.amount, r, ms);
@@ -640,6 +641,23 @@ contract V208ExactOutTest is SplitBase {
         Run memory r2 = _runOut(keyV2, false, c2.amount);
         _assertBooksOut(bk0, _book(ms2), false, c2.amount, r2, ms2);
         assertEq(r2.legs[0].status, LegStatus.SKIP_REVERT, "the mocked leg failed");
+    }
+
+    /// @dev The hook's constructor takes both splitters (D-36): a zero address, an address with no code, or the same
+    ///      address twice is `InvalidSplitter`, for either argument.
+    function test_V208_constructorRejectsBadSplitterOut() public {
+        ConfluenceSplitter s = splitter;
+        ConfluenceSplitterOut o = splitterOut;
+        vm.expectRevert(ConfluenceHook.InvalidSplitter.selector);
+        new ConfluenceHook(manager, s, ConfluenceSplitterOut(address(0)));
+        vm.expectRevert(ConfluenceHook.InvalidSplitter.selector);
+        new ConfluenceHook(manager, s, ConfluenceSplitterOut(makeAddr("noCode")));
+        vm.expectRevert(ConfluenceHook.InvalidSplitter.selector);
+        new ConfluenceHook(manager, ConfluenceSplitter(address(0)), o);
+        vm.expectRevert(ConfluenceHook.InvalidSplitter.selector);
+        new ConfluenceHook(manager, s, ConfluenceSplitterOut(address(s))); // the same address twice
+        vm.expectRevert(ConfluenceHook.InvalidSplitter.selector);
+        new ConfluenceHook(manager, ConfluenceSplitter(address(o)), o);
     }
 
     // =====================================================================================================
@@ -953,7 +971,7 @@ contract V208ExactOutTest is SplitBase {
             uint256 gIn = g - gasleft();
             _coolAll();
             g = gasleft();
-            splitter.planExactOut(k, zfo, _lim(zfo), walkedOut, sn, em);
+            splitterOut.planExactOut(k, zfo, _lim(zfo), walkedOut, sn, em);
             uint256 gOut = g - gasleft();
             console2.log(zfo ? "plan gas, token0 in: exact in " : "plan gas, token1 in: exact in ", gIn);
             console2.log(zfo ? "plan gas, token0 in: exact out" : "plan gas, token1 in: exact out", gOut);
@@ -964,8 +982,10 @@ contract V208ExactOutTest is SplitBase {
     }
 
     function _coolAll() internal {
-        address[8] memory touched =
-            [address(manager), address(hookV2), address(splitter), AQUA, ROUTER, USDC, address(mumb), _guard()];
+        address[9] memory touched = [
+            address(manager), address(hookV2), address(splitter), address(splitterOut), AQUA, ROUTER, USDC,
+            address(mumb), _guard()
+        ];
         for (uint256 i; i < touched.length; i++) {
             vm.cool(touched[i]);
         }
