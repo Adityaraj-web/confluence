@@ -358,5 +358,6 @@ Entry format:
 - **Spec-reviewer fixes:** Lens slot count also clamped to `MakerVenue.MAX_MAKERS`; pool-only fields and `gainBps` now compared to a real pool-only swap with makers registered; `int256` extremes tested; NatSpec notes the PoolManager-balance dependence and narrows the `minHookGas` and never-reverts claims to what is tested.
 - **Carry-overs:**
   - **For V2-11:** PlanCheck call overhead, about 150 gas on legged swaps (ten-argument internal call, calldata `key` through one more frame; not isolated).
+  - **For Phase 3 (gas limit):** `minHookGas` is a sufficient bound, not a gas estimate. The UI uses `eth_estimateGas` for the gas limit and `minHookGas` only as a floor check, because 2.87M for 3 legs would look alarming in a wallet.
   - **For Phase 3:** the UI calls V4Quoter for totals and the Lens for the breakdown; a deeper Lens walk would need a parameterised `PoolVenue` (revisit only if the UI needs an exact pool-only breakdown past the walk). The UI pins the hook address when calling the Lens. `simulate()` (per-leg execution outcomes, including `SKIP_REVERT` and `SKIP_GAS`) only if the UI needs it.
 - Open issues: none new.
