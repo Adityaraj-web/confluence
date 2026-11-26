@@ -67,7 +67,7 @@ contracts/
   src/ConfluenceSplitter.sol           v2 split planner (view, immutable; the hook calls it, D-35)
   src/ConfluenceSplitterOut.sol        v2 exact-output split planner (view, immutable; the hook calls it, D-36)
   src/ConfluenceLens.sol               v2 view contract
-  src/libraries/                       SplitMath, PoolVenue, MakerVenue, AnchorLib, StrategyTemplate
+  src/libraries/                       SplitMath, PoolVenue, MakerVenue, AnchorLib, StrategyTemplate, PlanCheck
   src/v1/                              v1 hook and band contract, frozen (moved in V2-00) for v1 tests and the attack suite
   test/base/                           ForkBase, StrategyLib, Vectors, ForkOracle
   test/unit/ test/fork/ test/attack/ test/gas/ test/invariant/

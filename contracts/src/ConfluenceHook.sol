@@ -31,6 +31,7 @@ import {ConfluenceSplitter, LegStatus, Plan} from "./ConfluenceSplitter.sol";
 import {ConfluenceSplitterOut} from "./ConfluenceSplitterOut.sol";
 import {AnchorLib} from "./libraries/AnchorLib.sol";
 import {MakerVenue} from "./libraries/MakerVenue.sol";
+import {PlanCheck} from "./libraries/PlanCheck.sol";
 import {StrategyTemplate} from "./libraries/StrategyTemplate.sol";
 
 /// @title ConfluenceHook (v2)
@@ -152,19 +153,19 @@ contract ConfluenceHook is IHooks {
     /// @notice Most strategies registered per pool (bounds every registry loop).
     uint256 public constant MAX_STRATEGIES = 6;
     /// @notice Most maker legs per swap; the hook refuses a plan with more.
-    uint256 public constant MAX_LEGS = 3;
+    uint256 public constant MAX_LEGS = PlanCheck.MAX_LEGS;
     /// @notice Smallest leg, in basis points of the swap's input; the hook refuses a plan with a smaller one.
-    uint256 public constant MIN_LEG_BPS = 50;
+    uint256 public constant MIN_LEG_BPS = PlanCheck.MIN_LEG_BPS;
     /// @notice Gas kept back for the rest of the swap after the plan and after each leg (D-20, re-measured in V2-07).
-    uint256 public constant GAS_RESERVE = 170_000;
+    uint256 public constant GAS_RESERVE = PlanCheck.GAS_RESERVE;
     /// @notice Least gas a leg is started with.
-    uint256 public constant MIN_LEG_GAS = 160_000;
+    uint256 public constant MIN_LEG_GAS = PlanCheck.MIN_LEG_GAS;
     /// @notice Most gas one leg's router call may use.
-    uint256 public constant LEG_GAS_CAP = 640_000;
+    uint256 public constant LEG_GAS_CAP = PlanCheck.LEG_GAS_CAP;
     /// @notice Most gas the splitter call may use.
-    uint256 public constant PLAN_GAS_CAP = 1_700_000;
+    uint256 public constant PLAN_GAS_CAP = PlanCheck.PLAN_GAS_CAP;
     /// @notice Bytes of an encoded `Plan`; any other return length means pool-only.
-    uint256 public constant PLAN_BYTES = 36 * 32;
+    uint256 public constant PLAN_BYTES = PlanCheck.PLAN_BYTES;
     /// @notice Aqua, the same address on Ethereum and Unichain (D-28).
     address public constant AQUA = 0x1111113CCf1426A8E30e2bfF5E005d929bF6a90a;
     /// @notice The canonical AquaSwapVMRouter v1.0.2, the same address on Ethereum and Unichain (D-28).
@@ -173,7 +174,6 @@ contract ConfluenceHook is IHooks {
     /// @dev Aqua's marker for a docked strategy, and the token count of a template strategy.
     uint8 private constant _DOCKED = 0xff;
     uint8 private constant _TOKENS = 2;
-    uint256 private constant _BPS = 10_000;
     // casting to 'uint128' is safe: int128 max is positive
     // forge-lint: disable-next-line(unsafe-typecast)
     uint256 private constant _MAX_INT128 = uint256(uint128(type(int128).max));
@@ -383,7 +383,18 @@ contract ConfluenceHook is IHooks {
         uint256 sumIn = 0;
         uint256 sumOut = 0;
         if (n > 0) {
-            (uint8 code, Plan memory p) = _plan(key, params, amount, a, n, exactIn);
+            (uint8 code, Plan memory p) = PlanCheck.plan(
+                exactIn ? address(splitter) : address(splitterOut),
+                poolManager,
+                key,
+                params.zeroForOne,
+                params.sqrtPriceLimitX96,
+                amount,
+                a.snapTick,
+                a.emaTickX,
+                n,
+                exactIn
+            );
             for (uint256 i; i < n; i++) {
                 // casting to 'uint8' is safe: `_checkPlan` bounds every status by LegStatus.MAX_CODE
                 // forge-lint: disable-next-line(unsafe-typecast)
@@ -412,86 +423,6 @@ contract ConfluenceHook is IHooks {
         int128 outDelta = -SafeCast.toInt128(SafeCast.toInt256(sumOut));
         // The specified side first: the input for exact input, the output for exact output (Hooks.sol:272-278).
         return exactIn ? toBeforeSwapDelta(inDelta, outDelta) : toBeforeSwapDelta(outDelta, inDelta);
-    }
-
-    /// @dev Calls the splitter with a gas cap (low-level, so malformed data cannot revert), then checks the plan.
-    /// Returns `LegStatus.FILLED` for a plan to run, `SKIP_GAS` or `SKIP_PLAN` for pool-only.
-    function _plan(
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        uint256 amount,
-        AnchorLib.Anchor memory a,
-        uint256 n,
-        bool exactIn
-    ) private view returns (uint8 code, Plan memory p) {
-        uint256 g = gasleft();
-        if (g < GAS_RESERVE + MIN_LEG_GAS) return (LegStatus.SKIP_GAS, p);
-        // The two plan functions take the same arguments; only the selector differs.
-        bytes memory data = abi.encodeWithSelector(
-            exactIn ? ConfluenceSplitter.planExactIn.selector : ConfluenceSplitterOut.planExactOut.selector,
-            key,
-            params.zeroForOne,
-            params.sqrtPriceLimitX96,
-            amount,
-            a.snapTick,
-            a.emaTickX
-        );
-        bytes memory ret = new bytes(PLAN_BYTES);
-        address target = exactIn ? address(splitter) : address(splitterOut);
-        uint256 gasCap = Math.min(g - GAS_RESERVE, PLAN_GAS_CAP);
-        uint256 len = PLAN_BYTES;
-        bool ok;
-        assembly ("memory-safe") {
-            // Nothing is copied unless the return is exactly `len` bytes long.
-            ok := staticcall(gasCap, target, add(data, 0x20), mload(data), 0, 0)
-            ok := and(ok, eq(returndatasize(), len))
-            if ok { returndatacopy(add(ret, 0x20), 0, len) }
-        }
-        if (!ok) return (LegStatus.SKIP_PLAN, p);
-        // Exactly PLAN_BYTES of static words: this decode cannot revert.
-        p = abi.decode(ret, (Plan));
-        address tokenIn = Currency.unwrap(params.zeroForOne ? key.currency0 : key.currency1);
-        if (!_checkPlan(p, tokenIn, amount, n, exactIn)) return (LegStatus.SKIP_PLAN, p);
-        return (LegStatus.FILLED, p);
-    }
-
-    /// @dev The hook's own checks on a plan (D-35, D-36): valid codes; each leg for a registered slot, within the maker's
-    /// [capMin, capIn] as read and at least `MIN_LEG_BPS`, in the swap's specified units (input for exact input, output
-    /// for exact output); at most `MAX_LEGS`; the legs and the pool's share sum to the amount; the legs' total input
-    /// within the PoolManager's balance of the input token (read here); the other side within int128; no pool share past
-    /// a truncated walk, and for exact output no plan unless the walked segments give the whole output; and the
-    /// split's quoted other side no worse than pool-only's (at least the output plus the tail bound for exact input, at
-    /// most the input for exact output, whose tail is 0). Every operation is bounded so that no plan can make it revert.
-    function _checkPlan(Plan memory p, address tokenIn, uint256 amount, uint256 n, bool exactIn)
-        private
-        view
-        returns (bool)
-    {
-        uint256 sumSp = 0;
-        uint256 sumOt = 0;
-        uint256 count = 0;
-        for (uint256 i; i < MakerVenue.MAX_MAKERS; i++) {
-            (uint256 sp, uint256 ot) = exactIn ? (p.amountIn[i], p.amountOut[i]) : (p.amountOut[i], p.amountIn[i]);
-            if (i < n && p.status[i] > LegStatus.MAX_CODE) return false;
-            if (sp == 0) {
-                if (ot != 0 && !exactIn) return false;
-                continue;
-            }
-            if (i >= n || sp > amount || sp < p.capMin[i] || sp > p.capIn[i]) return false;
-            if (sp * _BPS < amount * MIN_LEG_BPS || ot > _MAX_INT128 || (ot == 0 && !exactIn)) return false;
-            count++;
-            sumSp += sp;
-            sumOt += ot;
-        }
-        if (count == 0) return true;
-        if (count > MAX_LEGS || sumSp > amount || p.poolIn != amount - sumSp || sumOt > _MAX_INT128) return false;
-        // forge-lint: disable-next-line(calls-loop)
-        if ((exactIn ? sumSp : sumOt) > IERC20(tokenIn).balanceOf(address(poolManager))) return false;
-        if (p.poolOut > _MAX_INT128 || p.poolOnlyOut > _MAX_INT128 || p.tail > _MAX_INT128) return false;
-        if (p.truncated != 0 && p.poolIn > p.walked) return false;
-        if (exactIn) return p.poolOut + sumOt >= p.poolOnlyOut + p.tail;
-        // Exact output: the walked segments must give the whole output (no estimate past the walk, D-36).
-        return p.tail == 0 && p.walked >= amount && p.poolOut + sumOt <= p.poolOnlyOut;
     }
 
     /// @dev Runs the planned legs. Takes their total input once, fills each through the router, then settles back
