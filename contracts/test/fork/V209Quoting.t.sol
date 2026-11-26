@@ -225,9 +225,8 @@ contract V209QuotingTest is SplitBase {
                 for (uint256 j; j < 4; j++) {
                     _makerSet(ns[j]);
                     uint256 amount = _amountFor(exactIn, zfo);
-                    string memory ctx = string.concat(
-                        exactIn ? "in" : "out", zfo ? " 0>1 " : " 1>0 ", vm.toString(ns[j]), " makers"
-                    );
+                    string memory ctx =
+                        string.concat(exactIn ? "in" : "out", zfo ? " 0>1 " : " 1>0 ", vm.toString(ns[j]), " makers");
                     (bool ok, uint256 v4) = _v4(keyV2, exactIn, zfo, amount);
                     assertTrue(ok, string.concat(ctx, ": V4Quoter answers"));
                     ConfluenceLens.Breakdown memory q = L().quote(keyV2, zfo, _spec(exactIn, amount));
@@ -253,9 +252,8 @@ contract V209QuotingTest is SplitBase {
                 for (uint256 j; j < 4; j++) {
                     _makerSet(ns[j]);
                     uint256 amount = _amountFor(exactIn, zfo);
-                    string memory ctx = string.concat(
-                        exactIn ? "in" : "out", zfo ? " 0>1 " : " 1>0 ", vm.toString(ns[j]), " makers"
-                    );
+                    string memory ctx =
+                        string.concat(exactIn ? "in" : "out", zfo ? " 0>1 " : " 1>0 ", vm.toString(ns[j]), " makers");
                     ConfluenceLens.Breakdown memory q = L().quote(keyV2, zfo, _spec(exactIn, amount));
                     Run memory r = _runMode(keyV2, exactIn, zfo, amount);
                     _same(q, r, exactIn, true, ctx);
@@ -321,10 +319,10 @@ contract V209QuotingTest is SplitBase {
         uint256 seen;
         uint256 amount = 1_000 * USDC_1;
 
-        // A: FILLED, MIN_LEG (a 1,000-deep maker), BAND (priced 4% off), UNDERFUNDED three ways: docked, drained, revoked.
+        // A: FILLED, MIN_LEG (a 200-deep maker: about 1 USDC of 1,000, under 0.5%), BAND (priced 4% off), UNDERFUNDED three ways: docked, drained, revoked.
         M[] memory ms = new M[](6);
         ms[0] = _joinM(keyV2, makers[0], 100_000e18, 100_000e6, _p());
-        ms[1] = _joinM(keyV2, makers[1], 1_000e18, 1_000e6, _p());
+        ms[1] = _joinM(keyV2, makers[1], 200e18, 200e6, _p());
         ms[2] = _joinM(keyV2, makers[2], _mumbAt(100_000 * USDC_1, snap + 400), 100_000 * USDC_1, _p());
         ms[3] = _joinM(keyV2, makers[3], 100_000e18, 100_000e6, _p());
         ms[4] = _joinM(keyV2, makers[4], 100_000e18, 100_000e6, _p());
@@ -341,7 +339,7 @@ contract V209QuotingTest is SplitBase {
         _joinM(keyV2, makers[0], 100_000e18, 100_000e6, _p());
         _joinM(keyV2, makers[1], 100_000e18, 100_000e6, tight);
         _joinM(keyV2, makers[2], uint256(type(uint128).max) + 1, 100_000e6, _p());
-        _swap(keyV2, trader, true, -int256(5 * USDC_1), "");
+        _swap(keyV2, trader, true, -int256(100 * USDC_1), ""); // moves the tick by about ten
         _nextBlock(1);
         seen |= _expectStatuses(keyV2, true, amount, "B");
         vm.revertToState(s);
@@ -547,7 +545,8 @@ contract V209QuotingTest is SplitBase {
                 for (uint256 i; i < pool.segments.length; i++) {
                     walkedAmt += exactIn ? pool.segments[i].capIn : pool.segments[i].capOut;
                 }
-                uint256 amount = walkedAmt + (exactIn ? (zfo ? 100 * USDC_1 : 100 * MUMB_1) : (zfo ? 100 * MUMB_1 : 100 * USDC_1));
+                uint256 amount =
+                    walkedAmt + (exactIn ? (zfo ? 100 * USDC_1 : 100 * MUMB_1) : (zfo ? 100 * MUMB_1 : 100 * USDC_1));
                 string memory ctx = string.concat(exactIn ? "in" : "out", zfo ? " 0>1" : " 1>0");
                 ConfluenceLens.Breakdown memory q = L().quote(k, zfo, _spec(exactIn, amount));
                 (bool ok, uint256 v4) = _v4(k, exactIn, zfo, amount);
@@ -587,7 +586,12 @@ contract V209QuotingTest is SplitBase {
         // 2. A quote in block N, then the price moves in N, then a swap in N+1: the snapshot moved.
         ConfluenceLens.Breakdown memory q2 = L().quote(keyV2, true, _spec(true, amount));
         assertEq(q2.legs[0].status, LegStatus.FILLED, "quoted fill");
-        _swap(keyV2, trader, true, -int256(1_000 * USDC_1), ""); // moves the price a long way, same block
+        // A push by the pool alone (a joint split would move the maker's price with the pool's): about 5%.
+        vm.prank(makers[0]);
+        hookV2.unregister(keyV2);
+        _swap(keyV2, trader, true, -int256(2_000 * USDC_1), "");
+        vm.prank(makers[0]);
+        hookV2.register(keyV2, _p());
         _nextBlock(1);
         Run memory r2 = _runMode(keyV2, true, true, amount);
         assertTrue(r2.legs[0].status != LegStatus.FILLED, "the maker is out of band of the new snapshot");
