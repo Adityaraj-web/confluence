@@ -115,7 +115,7 @@ contract V209QuotingTest is SplitBase {
     ///      requires the pool's side to match (not the case where the pool-only walk ends before the liquidity does).
     function _same(ConfluenceLens.Breakdown memory q, Run memory r, bool exactIn, bool strict, string memory ctx)
         internal
-        view
+        pure
     {
         assertEq(q.exactIn, exactIn, string.concat(ctx, ": mode"));
         assertEq(q.legs.length, r.legs.length, string.concat(ctx, ": one entry per slot read"));
