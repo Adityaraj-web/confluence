@@ -31,7 +31,7 @@ contract V209QuotingTest is SplitBase {
 
     /// @dev Uniswap's V4Quoter, deployed on mainnet at FORK_BLOCK (the spec's [VERIFY]: no deploy needed).
     IV4Quoter internal constant QUOTER = IV4Quoter(0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203);
-    /// @dev 7 slots: the largest in-test registry is 6; `GAS_RESERVE + MIN_LEG_GAS` = 330,000 is the hook's precheck.
+    /// @dev `GAS_RESERVE + MIN_LEG_GAS`: the hook's own gas precheck before the plan and before each leg.
     uint256 internal constant HOOK_PRECHECK = 330_000;
     /// @dev A tx gas limit that cannot leave 330,000 at the hook: below it the hook's own precheck trips.
     uint256 internal constant CLEARLY_LESS = 320_000;
@@ -255,8 +255,22 @@ contract V209QuotingTest is SplitBase {
                     string memory ctx =
                         string.concat(exactIn ? "in" : "out", zfo ? " 0>1 " : " 1>0 ", vm.toString(ns[j]), " makers");
                     ConfluenceLens.Breakdown memory q = L().quote(keyV2, zfo, _spec(exactIn, amount));
+                    Run memory po = _poolOnlyMode(keyV2, exactIn, zfo, amount); // restores its own state
                     Run memory r = _runMode(keyV2, exactIn, zfo, amount);
                     _same(q, r, exactIn, true, ctx);
+                    // The pool-only reference (and so the gain) against a REAL pool-only swap, makers registered.
+                    assertTrue(q.poolOnlyExact, string.concat(ctx, ": the reference is inside the walk"));
+                    assertEq(q.poolOnlyOut, po.got, string.concat(ctx, ": pool-only out"));
+                    assertEq(q.poolOnlyIn, po.paid, string.concat(ctx, ": pool-only in"));
+                    {
+                        // casting to 'int256' is safe: the amounts are far below 2^255
+                        // forge-lint: disable-start(unsafe-typecast)
+                        int256 gain = exactIn
+                            ? (int256(r.got) - int256(po.got)) * 10_000 / int256(po.got)
+                            : (int256(po.paid) - int256(r.paid)) * 10_000 / int256(po.paid);
+                        // forge-lint: disable-end(unsafe-typecast)
+                        assertEq(int256(q.gainBps), gain, string.concat(ctx, ": gain in bps, to the value"));
+                    }
                     assertEq(q.legs.length, ns[j], string.concat(ctx, ": one entry per registered slot"));
                     if (ns[j] > 0) assertTrue(_anyLeg(q), string.concat(ctx, ": the premise: a leg is planned"));
                     if (_anyLeg(q)) assertTrue(q.poolExact, string.concat(ctx, ": a legged quote is exact"));
@@ -287,7 +301,7 @@ contract V209QuotingTest is SplitBase {
                 assertEq(q.totalOut, IERC20(tOut).balanceOf(trader) - outB, string.concat(ctx, ": out"));
                 assertEq(q.legs.length, 0, string.concat(ctx, ": no makers"));
                 assertEq(q.gainBps, 0, string.concat(ctx, ": no gain"));
-                // and the same on the real hooked pool with no maker: the hook is a no-op without makers
+                // no maker: the pool-only field is the total, by construction (makers present: see lensEqualsSwap)
                 assertEq(exactIn ? q.poolOnlyOut : q.poolOnlyIn, exactIn ? q.totalOut : q.totalIn, "pool-only field");
                 vm.revertToState(s);
             }
@@ -494,6 +508,21 @@ contract V209QuotingTest is SplitBase {
         q = _copy(o);
         q.poolIn += 1;
         _poolOnlyBoth(abi.encode(q), false, selOut, so, false, true, b, poOut, "out: sum");
+
+        // Never reverts for an amount the hook does not split: zero, or beyond int128 either way.
+        ConfluenceLens.Breakdown memory z = L().quote(keyV2, true, 0);
+        assertEq(z.totalIn + z.totalOut, 0, "zero: no totals");
+        assertEq(z.legs.length, 4, "zero: one entry per slot");
+        assertEq(z.legs[0].status, LegStatus.SKIP_PLAN, "zero: no plan");
+        z = L().quote(keyV2, true, -int256(uint256(1) << 127));
+        assertEq(z.planCode, LegStatus.SKIP_PLAN, "beyond int128: no plan");
+        assertEq(z.legs[3].amountIn, 0, "beyond int128: no leg");
+        z = L().quote(keyV2, false, int256(uint256(1) << 127));
+        assertEq(z.planCode, LegStatus.SKIP_PLAN, "beyond int128, exact output: no plan");
+        z = L().quote(keyV2, true, type(int256).min);
+        assertEq(z.planCode, LegStatus.SKIP_PLAN, "int256 min: no plan, no revert");
+        z = L().quote(keyV2, false, type(int256).max);
+        assertEq(z.planCode, LegStatus.SKIP_PLAN, "int256 max: no plan, no revert");
     }
 
     /// @dev A splitter that burns all its gas is cut off at `PLAN_GAS_CAP`: SKIP_PLAN, the real pool-only number.

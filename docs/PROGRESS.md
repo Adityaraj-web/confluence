@@ -347,3 +347,16 @@ Entry format:
   - **For V2-10:** attack the exact-output splitter as D-35 asks of the first (forged `walked`/`poolOut`/`poolOnlyOut` are the accepted gap); `Pool.swap` returns early on `amountSpecified == 0` (`Pool.sol:320`), so a swap whose output the makers fill entirely skips the price-limit checks, as for exact input.
   - **For V2-11:** both splitters and the hook have margin (hook 3,982 B, `ConfluenceSplitterOut` 2,161 B, `ConfluenceSplitter` 3,189 B); the exact-input gas rose by 0.13% to 0.22% from the mode-generic hook.
 - Open issues: none new.
+
+## 2026-11-26 · V2-09 · Adityaraj · Done (spec-reviewer run, no blocking gaps; not merged)
+- Changed: `contracts/src/libraries/PlanCheck.sol` (new: the hook's plan call and plan checks, moved verbatim), `contracts/src/ConfluenceHook.sol` (calls `PlanCheck`; public constants aliased; nothing else), `contracts/src/ConfluenceLens.sol` (new), `contracts/test/fork/V209Quoting.t.sol` (new, 15 tests), `CLAUDE.md` (layout line), `docs/ARCHITECTURE-v2.md`, `docs/DECISIONS.md` (D-37), `docs/FEATURES.md`. Both splitters, `ForkBase`, `scripts/`, `web/`, v1 untouched.
+- **What it does (D-37):** `ConfluenceLens.quote(key, zeroForOne, amountSpecified)` returns totals, each slot's input, output and status, the pool-only reference, gain in bps, the anchor and `minHookGas`; `makerLimits(key)` returns each slot's status and fill range per direction and mode. It runs the hook's own `PlanCheck` code, prices the pool with `PoolVenue`, and equals a real swap and V4Quoter to the wei. V4Quoter is deployed at FORK_BLOCK, so `ForkBase` is unchanged.
+- **Sizes:** Lens 13,405 B; hook 20,633 B (was 20,594; margin 3,943); splitters unchanged.
+- **PlanCheck cost (D-37 A):** legged swaps cost +144 to +150 gas (pool-only +2), over the 100-gas gate; accepted by Adityaraj after one bounded attempt.
+- **Verified:** V209 15 of 15; `testFuzz_V209_lensEqualsSwap` 256 runs default and 3,000 runs with 0 failures. Mutations (5): M1 refused-plan label, M2 pool share ignoring legs, M4 usable-maker mapping, M5 `minHookGas` leg term were caught; M3 (`poolExact` forced true for legged quotes) survived because it is redundant for any plan `PlanCheck` accepts, so the shortcut was removed. Full suite and Python results are in the final commit message.
+- **minHookGas** (sufficient bound, not tight): 1 leg 1,278,346; 2 legs 2,070,634; 3 legs 2,867,443.
+- **Spec-reviewer fixes:** Lens slot count also clamped to `MakerVenue.MAX_MAKERS`; pool-only fields and `gainBps` now compared to a real pool-only swap with makers registered; `int256` extremes tested; NatSpec notes the PoolManager-balance dependence and narrows the `minHookGas` and never-reverts claims to what is tested.
+- **Carry-overs:**
+  - **For V2-11:** PlanCheck call overhead, about 150 gas on legged swaps (ten-argument internal call, calldata `key` through one more frame; not isolated).
+  - **For Phase 3:** the UI calls V4Quoter for totals and the Lens for the breakdown; a deeper Lens walk would need a parameterised `PoolVenue` (revisit only if the UI needs an exact pool-only breakdown past the walk). The UI pins the hook address when calling the Lens. `simulate()` (per-leg execution outcomes, including `SKIP_REVERT` and `SKIP_GAS`) only if the UI needs it.
+- Open issues: none new.

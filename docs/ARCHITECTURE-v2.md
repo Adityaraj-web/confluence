@@ -17,7 +17,8 @@ v1 (`docs/ARCHITECTURE.md`, tag `v1-hackathon`, frozen in `contracts/src/v1/` by
 | `AnchorLib` | Library | Block-start snapshot and EMA update | V2-03 |
 | `StrategyTemplate` | Library, pure | Builds and checks template T1's program bytes: fee, XYC curve, BandGuardV2 | V2-05 |
 | `BandGuardV2` | Extruction target, stateless | Runs inside the maker's program; checks the fill against the hook's anchor; optional only-the-hook taker rule | V2-04 |
-| `ConfluenceLens` | View contract | The hook's maths as a full breakdown, for apps, solvers and indexers | V2-09 |
+| `PlanCheck` | Library, view | The hook's plan call (capped `staticcall`, exact length check) and its checks on a plan, moved out of the hook so the Lens runs the same code (D-37) | V2-09 |
+| `ConfluenceLens` | View contract, stateless | The hook's decision as a breakdown: per slot input, output and status, totals, pool-only reference, anchor, gain, a sufficient gas bound; and each maker's limits. Equals a real swap and V4Quoter; a view cannot see `SKIP_REVERT` or `SKIP_GAS`, and past the pool walk apps take the total from V4Quoter (D-37) | V2-09 |
 | PoolManager, AquaSwapVMRouter v1.0.2, Aqua | Canonical | Used as deployed | — |
 
 Libraries are `internal`. The venue reads and the solve do not fit in the hook with the legs (34,957 B measured), so they run in `ConfluenceSplitter`, a separate immutable contract whose address is fixed in the hook's constructor; verifying the hook includes verifying the splitter (D-35). Exact output has its own splitter, `ConfluenceSplitterOut`, because both planners together are 26,692 B (over EIP-170); the hook's constructor takes both and rejects a missing or repeated address (D-36).

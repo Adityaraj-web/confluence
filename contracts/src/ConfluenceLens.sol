@@ -43,6 +43,10 @@ interface IConfluenceHookLens {
 ///      swap stores, or what is stored). A swap in a later block uses that block's snapshot and a decayed EMA, so band
 ///      caps and drift (and so skip codes) can differ from a quote taken earlier.
 ///
+///      **Balance.** The plan checks read the PoolManager's balance of the input token when the Lens runs. A router
+///      that settles input before the swap, or an earlier hop in the same unlock, changes it, so the swap can accept a
+///      plan the Lens refused, or the reverse.
+///
 ///      **Trust.** Everything is read from `key.hooks` (PoolManager, splitters, anchor, registry) and the Lens does
 ///      not check it is a genuine `ConfluenceHook`: quotes mean something only for one. Apps pin the hook address.
 contract ConfluenceLens {
@@ -67,8 +71,10 @@ contract ConfluenceLens {
     /// @param poolOut The output the pool's share gives.
     /// @param poolOnlyIn The input pool-only takes (all of it, or less at a hard end).
     /// @param poolOnlyOut The output pool-only gives for it.
-    /// @param poolExact False only for a pool-only quote that runs past the walk: the totals are then the walked
-    ///        part, and the total must come from V4Quoter. A quote with a leg is always exact.
+    /// @param poolExact False when the pool's share runs past the walk: the totals are then the walked part, and the
+    ///        total must come from V4Quoter. Checked here, not assumed: for an honest splitter a quote with a leg is
+    ///        always exact (`PlanCheck` refuses a pool share past a truncated walk), so it is false only for a pool-only
+    ///        quote.
     /// @param poolOnlyExact False when the pool-only reference runs past the walk.
     /// @param gainBps Output gained (exact input) or input saved (exact output) against pool-only, in basis points of
     ///        pool-only; a lower bound when `poolOnlyExact` is false.
@@ -78,7 +84,9 @@ contract ConfluenceLens {
     /// @param planCode `LegStatus.FILLED` if the plan runs (or no plan was needed), `SKIP_GAS` or `SKIP_PLAN` if the
     ///        hook would go pool-only.
     /// @param minHookGas A SUFFICIENT bound (not tight) on the gas the hook needs at `beforeSwap` entry to run every
-    ///        planned leg without `SKIP_GAS`; 0 if no leg is planned.
+    ///        planned leg without `SKIP_GAS`; 0 if no leg is planned. Every leg is allowed its full cap; tested for
+    ///        exact input, token0 in, 1 to 3 legs (a swap sent with this plus 300,000 fills every leg). The plan's
+    ///        gas is measured in this view call, where the accounts are cold.
     /// @param legs One entry per registry slot the hook reads (at most `MAX_STRATEGIES`).
     struct Breakdown {
         bool exactIn;
@@ -133,7 +141,8 @@ contract ConfluenceLens {
 
     /// @notice The quote of a swap on `key`: `amountSpecified` < 0 is exact input, > 0 exact output, as in v4. Quotes at
     ///         the same price limits V4Quoter uses (the whole price range). Anyone may call it. Never reverts for a
-    ///         broken maker, a reverting or malformed splitter, or a plan the hook would refuse; it reverts for a pool
+    ///         broken maker, a reverting or malformed splitter, or a plan the hook would refuse (tested with an
+    ///         amount of 0, +-2^127 and the int256 extremes); it reverts for a pool
     ///         that does not exist (the hook's anchor read does). An amount of 0, or beyond int128 either way, is
     ///         quoted pool-only (the hook does not split it).
     function quote(PoolKey calldata key, bool zeroForOne, int256 amountSpecified)
@@ -147,12 +156,19 @@ contract ConfluenceLens {
         b.exactIn = amountSpecified < 0;
         (b.snapTick, b.emaTickX, b.anchorFresh) = hook.anchorOfX(id);
         MakerVenue.Entry[] memory slots = hook.strategiesOf(id);
-        uint256 n = Math.min(slots.length, hook.MAX_STRATEGIES());
+        uint256 n = Math.min(Math.min(slots.length, hook.MAX_STRATEGIES()), MakerVenue.MAX_MAKERS);
         b.legs = new LegQuote[](n);
         for (uint256 i; i < n; i++) {
             (b.legs[i].maker, b.legs[i].strategyHash) = (slots[i].maker, slots[i].strategyHash);
         }
-        if (amountSpecified == 0) return b;
+        if (amountSpecified == 0) {
+            // The hook does not split it: no plan, no totals.
+            b.planCode = LegStatus.SKIP_PLAN;
+            for (uint256 i; i < n; i++) {
+                b.legs[i].status = LegStatus.SKIP_PLAN;
+            }
+            return b;
+        }
         // casting to 'uint256' is safe: the sign is known, and -(x + 1) + 1 does not overflow for int256 min
         // forge-lint: disable-next-line(unsafe-typecast)
         uint256 amount = b.exactIn ? uint256(-(amountSpecified + 1)) + 1 : uint256(amountSpecified);
@@ -219,7 +235,7 @@ contract ConfluenceLens {
         // forge-lint: disable-next-line(unused-return)
         (int24 snap, int56 emaX,) = hook.anchorOfX(id);
         MakerVenue.Entry[] memory slots = hook.strategiesOf(id);
-        uint256 n = Math.min(slots.length, hook.MAX_STRATEGIES());
+        uint256 n = Math.min(Math.min(slots.length, hook.MAX_STRATEGIES()), MakerVenue.MAX_MAKERS);
         IPoolManager pm = hook.poolManager();
         out = new MakerLimit[](n);
         for (uint256 i; i < n; i++) {
@@ -276,7 +292,7 @@ contract ConfluenceLens {
             (b.poolIn, b.poolOut) = (used, got);
             (b.totalIn, b.totalOut) = (legsIn + used, legsOut + got);
             (b.poolOnlyOut, b.poolOnlyIn,) = PoolVenue.quoteExactIn(pool, amount);
-            b.poolExact = legged || !(pool.truncated && used < share);
+            b.poolExact = !(pool.truncated && used < share);
             b.poolOnlyExact = !(pool.truncated && b.poolOnlyIn < amount);
         } else {
             share = amount - legsOut;
@@ -284,7 +300,7 @@ contract ConfluenceLens {
             (b.poolIn, b.poolOut) = (used, got);
             (b.totalIn, b.totalOut) = (legsIn + used, legsOut + got);
             (b.poolOnlyIn, b.poolOnlyOut,) = PoolVenue.quoteExactOut(pool, amount);
-            b.poolExact = legged || !(pool.truncated && got < share);
+            b.poolExact = !(pool.truncated && got < share);
             b.poolOnlyExact = !(pool.truncated && b.poolOnlyOut < amount);
         }
         // Gain against pool-only. When a split's pool-only run ends past the walk the reference is the walked part plus
