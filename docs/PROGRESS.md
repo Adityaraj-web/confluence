@@ -362,8 +362,9 @@ Entry format:
   - **For Phase 3:** the UI calls V4Quoter for totals and the Lens for the breakdown; a deeper Lens walk would need a parameterised `PoolVenue` (revisit only if the UI needs an exact pool-only breakdown past the walk). The UI pins the hook address when calling the Lens. `simulate()` (per-leg execution outcomes, including `SKIP_REVERT` and `SKIP_GAS`) only if the UI needs it.
 - Open issues: none new.
 
-## 2026-11-27 · V2-10 · Adityaraj · Done pending the final suite line below (spec-reviewer pending, not merged)
+## 2026-11-27 · V2-10 · Adityaraj · Done (spec-reviewer pending, not merged)
 - **What shipped:** `contracts/test/attack/` A00 gas table, A01 to A15 (`AttackBase` fixture, hostile token, `SafeSwapRouter`), `test/attack/v1/` (A01, A06: both attacks pay on v1); `docs/THREATS.md`; D-38 (scenario record, spec corrections), D-39 (three narrow hook fixes). Hook change (D-39): no-return-safe `sync` / `transfer` / `settle`, `poolManager.take` inside try/catch, one transient lock over `beforeSwap`, `register`, `unregister`, `evict`; runtime 20,633 to 20,819 B (+186), stop rule met (D-39).
+- **Final run:** `forge test` 317 passed, 0 failed, 0 skipped (49 suites; baseline 257); Python reference 15 OK; `forge fmt --check test/attack` clean.
 - **Not merged, no tags.** Splitters and `BandGuardV2` stripped hashes unchanged from `main` (Splitter 0xc922518a..., SplitterOut 0x3b500a8b..., BandGuardV2 0x7193dcce...). Hook stripped hash `main` 0xc3631e8b... to now 0x88a717ab... (D-39 only).
 - **v1 results (recomputed):** same-block push: attacker +29.641527 USDC, Priya -38.574122; displacement: displacer +19.704921 as the maker, victim 980.295 MUMB instead of 987.158.
 - **Mutations (5, each applied, file run, restored):**
