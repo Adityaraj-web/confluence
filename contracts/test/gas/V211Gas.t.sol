@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {console2} from "forge-std/console2.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
@@ -11,6 +12,7 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 
+import {LegStatus} from "../../src/ConfluenceSplitter.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {MakerVenue} from "../../src/libraries/MakerVenue.sol";
 import {PoolVenue} from "../../src/libraries/PoolVenue.sol";
@@ -232,5 +234,312 @@ contract V211GasTest is SplitBase {
         PoolVenue.Pool memory p = PoolVenue.read(manager, k.toId(), k.tickSpacing, true, TickMath.MIN_SQRT_PRICE + 1);
         g -= gasleft();
         console2.log(label, g, p.segments.length);
+    }
+
+    // ------------------------------------------------------------------------------------------ scenarios
+
+    uint256 internal constant SMALL = 0;
+    uint256 internal constant MID = 1;
+    uint256 internal constant LARGE = 2;
+
+    /// @dev `legs` makers of equal fee (0.30%) and depth 100,000 / 80,000 / 60,000 on `k`: every maker takes a share at
+    ///      every size, so the leg count is the maker count.
+    function _gasMakers(PoolKey memory k, uint256 legs) internal {
+        uint256[3] memory depth = [uint256(100_000), 80_000, 60_000];
+        for (uint256 i; i < legs; i++) {
+            _joinM(k, makers[i], depth[i] * 1e18, depth[i] * 1e6, _p());
+        }
+    }
+
+    /// @dev Amount per size class, in units of the swap's specified token (USDC in, or MUMB out).
+    function _scn(uint256 size, bool exactIn, uint256 legs) internal pure returns (uint256) {
+        if (exactIn) return [uint256(100), 1_000, legs == 0 ? 960 : 2_500][size] * 1e6;
+        return [uint256(100), 250, 400][size] * 1e18;
+    }
+
+    /// @dev The scenario on the gapped pool (ticks inside the swap's reach), fixture built with gas metering paused,
+    ///      the swap measured as M11. Asserts every maker filled. Returns the gas, the crossings of the pool's tick.
+    function _scenario(uint256 legs, uint256 size, bool exactIn) internal returns (uint256 gas_, uint256 crossed) {
+        vm.pauseGasMetering();
+        PoolKey memory gap = _gapKey();
+        _initExact(gap);
+        bn0 = block.number;
+        ts0 = block.timestamp;
+        _gasMakers(gap, legs);
+        vm.resumeGasMetering();
+        uint256 filled;
+        (gas_, filled) = _m11(gap, true, exactIn, _scn(size, exactIn, legs));
+        assertEq(filled, legs, "every maker fills");
+        crossed = _crossed(gap);
+    }
+
+    /// @dev Initialised ticks of the gapped pool crossed by the pool's tick (zero for one: C-60 to C-420).
+    function _crossed(PoolKey memory k) internal view returns (uint256 n) {
+        int24 c = _floorToSpacing(TickMath.getTickAtSqrtPrice(anchorSqrtPriceX96(true)));
+        (, int24 t,,) = manager.getSlot0(k.toId());
+        for (uint256 j = 1; j <= 7; j++) {
+            if (t < c - int24(int256(60 * j))) n++;
+        }
+    }
+
+    function test_V211_scenarioTable() public {
+        console2.log("M11 scenarios: legs / size / mode | gas | crossings");
+        for (uint256 l; l <= 3; l++) {
+            for (uint256 z; z < 3; z++) {
+                for (uint256 m; m < 2; m++) {
+                    uint256 s = vm.snapshotState();
+                    (uint256 g, uint256 c) = _scenario(l, z, m == 0);
+                    console2.log(
+                        string.concat(vm.toString(l), "L size", vm.toString(z), m == 0 ? " in " : " out "), g, c
+                    );
+                    vm.revertToState(s);
+                }
+            }
+        }
+    }
+
+    function test_V211_snap_0L_small_in() public {
+        _scenario(0, 0, true);
+    }
+
+    function test_V211_snap_0L_small_out() public {
+        _scenario(0, 0, false);
+    }
+
+    function test_V211_snap_0L_mid_in() public {
+        _scenario(0, 1, true);
+    }
+
+    function test_V211_snap_0L_mid_out() public {
+        _scenario(0, 1, false);
+    }
+
+    function test_V211_snap_0L_large_in() public {
+        _scenario(0, 2, true);
+    }
+
+    function test_V211_snap_0L_large_out() public {
+        _scenario(0, 2, false);
+    }
+
+    function test_V211_snap_1L_small_in() public {
+        _scenario(1, 0, true);
+    }
+
+    function test_V211_snap_1L_small_out() public {
+        _scenario(1, 0, false);
+    }
+
+    function test_V211_snap_1L_mid_in() public {
+        _scenario(1, 1, true);
+    }
+
+    function test_V211_snap_1L_mid_out() public {
+        _scenario(1, 1, false);
+    }
+
+    function test_V211_snap_1L_large_in() public {
+        _scenario(1, 2, true);
+    }
+
+    function test_V211_snap_1L_large_out() public {
+        _scenario(1, 2, false);
+    }
+
+    function test_V211_snap_2L_small_in() public {
+        _scenario(2, 0, true);
+    }
+
+    function test_V211_snap_2L_small_out() public {
+        _scenario(2, 0, false);
+    }
+
+    function test_V211_snap_2L_mid_in() public {
+        _scenario(2, 1, true);
+    }
+
+    function test_V211_snap_2L_mid_out() public {
+        _scenario(2, 1, false);
+    }
+
+    function test_V211_snap_2L_large_in() public {
+        _scenario(2, 2, true);
+    }
+
+    function test_V211_snap_2L_large_out() public {
+        _scenario(2, 2, false);
+    }
+
+    function test_V211_snap_3L_small_in() public {
+        _scenario(3, 0, true);
+    }
+
+    function test_V211_snap_3L_small_out() public {
+        _scenario(3, 0, false);
+    }
+
+    function test_V211_snap_3L_mid_in() public {
+        _scenario(3, 1, true);
+    }
+
+    function test_V211_snap_3L_mid_out() public {
+        _scenario(3, 1, false);
+    }
+
+    function test_V211_snap_3L_large_in() public {
+        _scenario(3, 2, true);
+    }
+
+    function test_V211_snap_3L_large_out() public {
+        _scenario(3, 2, false);
+    }
+
+    // ------------------------------------------------------------------------------------------ never reverts
+
+    uint256 internal constant V_LEGIT = 0;
+    uint256 internal constant V_BURN_GUARD = 1;
+    uint256 internal constant V_BURN_SPLITTER = 2;
+    uint256 internal constant FIXTURES = 4;
+
+    /// @dev Report mode: a reverting hooked swap is counted instead of failing the test. (Counters are memory values:
+    ///      `vm.revertToState` rolls this contract's storage back too.)
+    bool internal report;
+
+    /// @dev The gas limits: 285,000 to 500,000 step 5,000 (44), 550,000 to 1,000,000 step 50,000 (10), 1,100,000 to
+    ///      3,000,000 step 100,000 (20), then 3,500,000, 4,000,000, 5,000,000 and 6,000,000: 78 limits.
+    function _limits() internal pure returns (uint256[] memory l) {
+        l = new uint256[](78);
+        uint256 n;
+        for (uint256 g = 285_000; g <= 500_000; g += 5_000) l[n++] = g;
+        for (uint256 g = 550_000; g <= 1_000_000; g += 50_000) l[n++] = g;
+        for (uint256 g = 1_100_000; g <= 3_000_000; g += 100_000) l[n++] = g;
+        l[n++] = 3_500_000;
+        l[n++] = 4_000_000;
+        l[n++] = 5_000_000;
+        l[n++] = 6_000_000;
+    }
+
+    /// @dev Fixture `id`: 0 = gapped pool, 1 maker, 1,000 USDC; 1 = gapped, 3 makers, 2,500 USDC (pool crosses ticks);
+    ///      2 = gapped, 3 makers, 100 USDC; 3 = the v1 pool, 6 makers, 1,000 USDC. Exact output: the same size in MUMB
+    ///      times 0.99. Returns the pool and the amount, with the next block reached (the anchor update runs).
+    function _fixture(uint256 id, bool exactIn) internal returns (PoolKey memory k, uint256 amount) {
+        if (id == 3) {
+            k = keyV2;
+            _initExact(k);
+            _makers(6);
+            amount = _amount(true, exactIn);
+        } else {
+            k = _gapKey();
+            _initExact(k);
+            _gasMakers(k, id == 0 ? 1 : 3);
+            uint256 usdc = id == 0 ? 1_000 : (id == 1 ? 2_500 : 100);
+            amount = exactIn ? usdc * 1e6 : (usdc * 99 / 100) * 1e18;
+        }
+        _nextBlock(12);
+    }
+
+    function _tryAtLimit(PoolKey memory k, uint256 limit, bool exactIn, uint256 amount) internal returns (bool ok) {
+        vm.startPrank(trader);
+        IERC20(USDC).approve(address(swapRouter), type(uint256).max);
+        mumb.approve(address(swapRouter), type(uint256).max);
+        try swapRouter.swap{gas: limit}(
+            k,
+            IPoolManager.SwapParams({
+                zeroForOne: true, amountSpecified: exactIn ? -int256(amount) : int256(amount), sqrtPriceLimitX96: _lim(true)
+            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            ""
+        ) {
+            ok = true;
+        } catch {
+            ok = false;
+        }
+        vm.stopPrank();
+    }
+
+    /// @dev At every limit where the pool-only swap passes, the hooked swap passes and the hook ends clean.
+    function _sweep(PoolKey memory k, bool exactIn, uint256 amount, string memory label)
+        internal
+        returns (uint256 checked, uint256 filled, uint256 failures, uint256 maxFailLimit, uint256 minFailLimit)
+    {
+        uint256[] memory limits = _limits();
+        minFailLimit = type(uint256).max;
+        for (uint256 i; i < limits.length; i++) {
+            uint256 s = vm.snapshotState();
+            _unregisterAll(k);
+            bool poolOk = _tryAtLimit(k, limits[i], exactIn, amount);
+            vm.revertToState(s);
+            if (!poolOk) continue;
+            checked++;
+            vm.recordLogs();
+            bool ok = _tryAtLimit(k, limits[i], exactIn, amount);
+            if (!ok && report) {
+                failures++;
+                maxFailLimit = limits[i];
+                if (limits[i] < minFailLimit) minFailLimit = limits[i];
+                vm.getRecordedLogs();
+                vm.revertToState(s);
+                continue;
+            }
+            assertTrue(ok, string.concat(label, ": hooked swap reverted at gas limit ", vm.toString(limits[i])));
+            (ConfluenceHook.Leg[] memory legs,) = _legsFrom(vm.getRecordedLogs(), address(hookV2));
+            if (_countStatus(legs, LegStatus.FILLED) > 0) filled++;
+            _assertClean();
+            vm.revertToState(s);
+        }
+        assertGe(checked, 15, string.concat(label, ": the pool alone passes at enough limits"));
+    }
+
+    function _sweepAll(uint256 variant) internal {
+        uint256 base = vm.snapshotState();
+        for (uint256 id; id < FIXTURES; id++) {
+            for (uint256 m; m < 2; m++) {
+                bool exactIn = m == 0;
+                vm.revertToState(base);
+                (PoolKey memory k, uint256 amount) = _fixture(id, exactIn);
+                if (variant == V_BURN_GUARD) {
+                    vm.etch(_guard(), _burnerCode());
+                } else if (variant == V_BURN_SPLITTER) {
+                    vm.etch(address(splitter), _burnerCode());
+                    vm.etch(address(splitterOut), _burnerCode());
+                }
+                string memory label = string.concat(
+                    "fixture ", vm.toString(id), exactIn ? " exact-in" : " exact-out", " variant ", vm.toString(variant)
+                );
+                (uint256 checked, uint256 filled, uint256 failures, uint256 hi, uint256 lo) =
+                    _sweep(k, exactIn, amount, label);
+                console2.log(label, checked, filled);
+                if (report) console2.log("   failing limits / lowest / highest", failures, failures == 0 ? 0 : lo, hi);
+            }
+        }
+    }
+
+    function test_V211_neverRevertsWherePoolOnlyPasses_legit() public {
+        _sweepAll(V_LEGIT);
+    }
+
+    function test_V211_neverRevertsWherePoolOnlyPasses_burningGuard() public {
+        _sweepAll(V_BURN_GUARD);
+    }
+
+    function test_V211_neverRevertsWherePoolOnlyPasses_burningSplitter() public {
+        _sweepAll(V_BURN_SPLITTER);
+    }
+
+    /// @dev Not acceptance tests: the same sweeps in report mode, so every failing limit is counted (one test per
+    ///      variant: the three together exceed the test gas limit).
+    function test_V211_sweepReport_legit() public {
+        report = true;
+        _sweepAll(V_LEGIT);
+    }
+
+    function test_V211_sweepReport_burningGuard() public {
+        report = true;
+        _sweepAll(V_BURN_GUARD);
+    }
+
+    function test_V211_sweepReport_burningSplitter() public {
+        report = true;
+        _sweepAll(V_BURN_SPLITTER);
     }
 }
