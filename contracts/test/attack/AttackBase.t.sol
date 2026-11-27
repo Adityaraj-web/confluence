@@ -204,6 +204,24 @@ abstract contract AttackBase is SplitBase {
     }
 
     // =====================================================================================================
+    // The main pool with one maker, and the attacker funded
+    // =====================================================================================================
+
+    /// @dev Records the anchor (a 1-raw swap), registers one maker with `mumbAmt` and `usdcAmt` (fee 0.30%), funds the
+    ///      attacker and the trader with plenty of both tokens.
+    function _oneMakerPool(uint256 mumbAmt, uint256 usdcAmt) internal returns (M memory m) {
+        _attackInit();
+        _initExact(keyV2);
+        m = _joinM(keyV2, makers[0], mumbAmt, usdcAmt, _pf(3_000_000));
+        deal(USDC, attacker, 5_000_000e6);
+        deal(USDC, trader, 5_000_000e6);
+        vm.startPrank(deployer);
+        mumb.mint(attacker, 5_000_000e18);
+        mumb.mint(trader, 5_000_000e18);
+        vm.stopPrank();
+    }
+
+    // =====================================================================================================
     // After every attack
     // =====================================================================================================
 
