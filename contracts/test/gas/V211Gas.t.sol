@@ -604,4 +604,94 @@ contract V211GasTest is SplitBase {
         g -= gasleft();
         assertLt(g, 190_000, "planExactIn, 1 maker, cold (M11 before: 228,418)");
     }
+
+    // ------------------------------------------------------------------------------------------ lever 2: readOut
+
+    /// @dev The exact-output read as it was before V2-11: `read` (exact-input caps), then `capsOut` over it.
+    function _oldReadOut(MakerVenue.Entry[] memory e, bool zfo, int24 snap, int56 emaX)
+        internal
+        view
+        returns (MakerVenue.Maker[] memory out)
+    {
+        out = MakerVenue.read(manager, keyV2, _guard(), e, zfo, snap, emaX);
+        address tokenIn = zfo ? USDC : address(mumb);
+        address tokenOut = zfo ? address(mumb) : USDC;
+        uint256 pm = IERC20(tokenIn).balanceOf(address(manager));
+        for (uint256 i; i < out.length; i++) {
+            MakerVenue.Maker memory m = out[i];
+            if (m.x == 0 || m.y == 0) continue;
+            (m.status, m.capMin, m.capOut, m.capIn) = MakerVenue.capsOut(
+                m.x, m.y, m.feeE9, MakerVenue.real(tokenOut, m.maker, m.y), pm, snap, zfo, e[i].params.bandBps
+            );
+        }
+    }
+
+    function _entries() internal view returns (MakerVenue.Entry[] memory e) {
+        ConfluenceHook.Slot[] memory s = hookV2.strategiesOf(idV2);
+        e = new MakerVenue.Entry[](s.length);
+        for (uint256 j; j < s.length; j++) {
+            e[j] = MakerVenue.Entry({maker: s[j].maker, params: s[j].params, strategyHash: s[j].strategyHash});
+        }
+    }
+
+    /// @dev The folded `readOut` returns exactly what read-then-`capsOut` returned, for healthy, drained and revoked
+    ///      makers, both directions.
+    function test_V211_readOutEqualsReadThenCapsOut() public {
+        _initExact(keyV2);
+        _makers(6);
+        // maker 2 drained of MUMB, maker 3 revoked its MUMB allowance, maker 4 revoked its USDC allowance
+        uint256 bal2 = mumb.balanceOf(makers[2]);
+        vm.prank(makers[2]);
+        mumb.transfer(address(0xdead), bal2);
+        vm.prank(makers[3]);
+        mumb.approve(AQUA, 0);
+        vm.prank(makers[4]);
+        IERC20(USDC).approve(AQUA, 0);
+        _nextBlock(12);
+        (int24 snap, int56 emaX,) = hookV2.anchorOfX(idV2);
+        MakerVenue.Entry[] memory e = _entries();
+        for (uint256 d; d < 2; d++) {
+            bool zfo = d == 0;
+            MakerVenue.Maker[] memory a = MakerVenue.readOut(manager, keyV2, _guard(), e, zfo, snap, emaX);
+            MakerVenue.Maker[] memory b = _oldReadOut(e, zfo, snap, emaX);
+            assertEq(a.length, b.length, "same length");
+            uint256 usable;
+            for (uint256 i; i < a.length; i++) {
+                assertEq(a[i].maker, b[i].maker, "maker");
+                assertEq(a[i].strategyHash, b[i].strategyHash, "hash");
+                assertEq(uint8(a[i].status), uint8(b[i].status), "status");
+                assertEq(a[i].x, b[i].x, "x");
+                assertEq(a[i].y, b[i].y, "y");
+                assertEq(a[i].feeE9, b[i].feeE9, "fee");
+                assertEq(a[i].capMin, b[i].capMin, "capMin");
+                assertEq(a[i].capIn, b[i].capIn, "capIn");
+                assertEq(a[i].capOut, b[i].capOut, "capOut");
+                if (a[i].status == MakerVenue.Status.OK) usable++;
+            }
+            assertGe(usable, 2, "the comparison covers usable makers");
+            assertLt(usable, 6, "and unusable ones");
+        }
+    }
+
+    /// @dev The exact-output plan, cold, USDC in, 1 / 3 / 6 makers: M11 before V2-11 239,906 / 382,037 / 636,286;
+    ///      with lever 1 166,350 / 308,347 / 562,351; with levers 1 and 2 about 152,000 / 270,000 / 488,000.
+    function test_V211_planExactOutGas() public {
+        uint8[3] memory ns = [1, 3, 6];
+        uint256[3] memory ceil = [uint256(160_000), 290_000, 520_000];
+        _initExact(keyV2);
+        bn0 = block.number;
+        ts0 = block.timestamp;
+        uint256 base = vm.snapshotState();
+        for (uint256 i; i < 3; i++) {
+            vm.revertToState(base);
+            _makers(ns[i]);
+            _nextBlockM11();
+            (int24 snap, int56 emaX,) = hookV2.anchorOfX(idV2);
+            _coolAll();
+            uint256 g = gasleft();
+            splitterOut.planExactOut(keyV2, true, TickMath.MIN_SQRT_PRICE + 1, EXACT_OUT_MUMB, snap, emaX);
+            g -= gasleft();
+            assertLt(g, ceil[i], string.concat("planExactOut gas, ", vm.toString(uint256(ns[i])), " makers"));
+        }
+    }
 }
