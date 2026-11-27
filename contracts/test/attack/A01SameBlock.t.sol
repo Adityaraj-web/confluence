@@ -165,4 +165,37 @@ contract A01SameBlockTest is AttackBase {
         uint256 vIn = vZfo ? bound(vSeed, 1e6, 3_000e6) : bound(vSeed, 1e18, 3_000e18);
         _attack(pushZfo, pushIn, vZfo, vIn);
     }
+
+    // ---------------------------------------------------------------- the push that moves spot past the band
+
+    /// @dev A maker priced 300 ticks (3%) off the snapshot, outside the band of the snapshot. The attacker pushes spot onto
+    ///      the maker's price inside the block (a limited swap), so a band centred on spot would accept the maker. The victim's
+    ///      swap must still find the maker `SKIP_BAND` and the maker's wallet and Aqua balances must not move: the hook caps
+    ///      each leg by the band of the SNAPSHOT before the router is called. MUT1 (the guard reading spot) survives this test,
+    ///      because the hook's cap is the first line; the guard is the line that holds against a DIRECT router fill by a
+    ///      non-exclusive strategy's taker, and `V204BandGuardFork.test_V204_sameBlockAttackRefused` is the test that kills MUT1.
+    function test_V210_pushOntoAMispricedMakerCannotOpenTheBand() public {
+        _attackInit();
+        _initExact(keyV2);
+        (int24 snap,,) = hookV2.anchorOf(idV2);
+        uint256 usdcAmt = 100_000e6;
+        M memory m = _joinM(keyV2, makers[0], _mumbAt(usdcAmt, snap + 300), usdcAmt, _pf(FEE_030));
+        int256 m0 = _value(makers[0], address(mumb));
+        (uint256 w0m, uint256 w0u) = (mumb.balanceOf(makers[0]), IERC20(USDC).balanceOf(makers[0]));
+        // MUMB in raises the tick: push spot onto the maker's price.
+        _swapLim(keyV2, false, 400_000e18, TickMath.getSqrtPriceAtTick(snap + 300));
+        (, int24 spot,,) = manager.getSlot0(idV2);
+        assertGe(spot, snap + 295, "the push put spot on the maker's price");
+        assertEq(_snap(), snap, "the snapshot did not move");
+        Run memory po = _poolOnly(keyV2, true, 1_000e6);
+        Run memory r = _run(keyV2, true, 1_000e6, "");
+        assertEq(r.legs.length, 1, "the maker is planned");
+        assertEq(r.legs[0].status, LegStatus.SKIP_BAND, "outside the band of the SNAPSHOT: refused");
+        assertEq(r.got, po.got, "exactly pool-only");
+        assertEq(mumb.balanceOf(makers[0]), w0m, "maker wallet MUMB unmoved");
+        assertEq(IERC20(USDC).balanceOf(makers[0]), w0u, "maker wallet USDC unmoved");
+        assertEq(_value(makers[0], address(mumb)), m0, "maker PnL 0");
+        m; // the shipped hash is not needed
+        _assertClean();
+    }
 }

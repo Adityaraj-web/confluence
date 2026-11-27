@@ -89,6 +89,33 @@ contract A14HostileSplitterTest is AttackBase {
     ///      exactly, with `poolOnlyOut` claimed as 0: every check passes (the strict threshold matches the router's real
     ///      output), the leg fills, and the trader gets LESS than from the pool alone. The hook cannot recompute
     ///      `poolOnlyOut`; it trusts the splitter it was built with.
+    /// @dev The never-worse check itself (added after MUT2, which removed it and survived the other A14 tests): a plan whose
+    ///      own totals are one wei short of the pool-only output it states (and the state is honest: `poolOnlyOut` is the
+    ///      real pool-only output) is refused by hook and Lens alike.
+    function test_V210_planWorseThanItsOwnPoolOnlyIsRefused() public {
+        _attackInit();
+        _initExact(keyV2);
+        M[] memory ms = _fourMakers();
+        Run memory po = _poolOnly(keyV2, true, 1_000e6);
+        Plan memory p = _plan(keyV2, true, 1_000e6);
+        Plan memory q = _copy(p);
+        for (uint256 j; j < 6; j++) {
+            (q.amountIn[j], q.amountOut[j]) = (0, 0);
+        }
+        uint256 a = q.capIn[3];
+        require(a * 10_000 >= 1_000e6 * hookV2.MIN_LEG_BPS() && a >= q.capMin[3], "premise: a valid leg");
+        (uint256 x, uint256 y) = _virt(ms[3], true);
+        uint256 legOut = _cpOut(x, y, ms[3].p.feeE9, a);
+        (q.amountIn[3], q.amountOut[3], q.status[3]) = (a, legOut, LegStatus.FILLED);
+        q.poolIn = 1_000e6 - a;
+        q.poolOnlyOut = po.got;
+        require(po.got > legOut, "premise: the pool-only output exceeds the leg's");
+        q.poolOut = po.got - legOut - 1; // the plan's total is one wei under pool-only
+        q.tail = 0;
+        q.truncated = 0;
+        _refusedByBoth(q, po, "worse than its own pool-only");
+    }
+
     function test_V210_pinned_understatedPoolOnlyPassesTheChecks() public {
         _attackInit();
         _initExact(keyV2);
