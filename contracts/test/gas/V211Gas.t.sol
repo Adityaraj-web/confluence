@@ -542,4 +542,66 @@ contract V211GasTest is SplitBase {
         report = true;
         _sweepAll(V_BURN_SPLITTER);
     }
+
+    // ------------------------------------------------------------------------------------------ lever 1: the walk
+
+    function _eq(PoolVenue.Segment memory a, PoolVenue.Segment memory b) internal pure returns (bool) {
+        return a.sqrtPriceStartX96 == b.sqrtPriceStartX96 && a.sqrtPriceEndX96 == b.sqrtPriceEndX96
+            && a.liquidity == b.liquidity && a.x == b.x && a.y == b.y && a.capIn == b.capIn && a.capOut == b.capOut;
+    }
+
+    /// @dev The bounded walk is the unbounded walk cut after the first segment that covers the amount: the same
+    ///      segments, not truncated, the step count equal to the segments here (no empty steps on this pool).
+    function _checkBounded(PoolKey memory k, bool exactIn, uint256 amount, uint256 expectSegments) internal view {
+        PoolVenue.Pool memory full = PoolVenue.read(manager, k.toId(), k.tickSpacing, true, _lim(true));
+        PoolVenue.Pool memory cut = PoolVenue.readTo(manager, k.toId(), k.tickSpacing, true, _lim(true), amount, exactIn);
+        assertEq(cut.segments.length, expectSegments, "segments walked");
+        assertFalse(cut.truncated, "a walk that covered the amount is not truncated");
+        uint256 sum;
+        for (uint256 i; i < cut.segments.length; i++) {
+            assertTrue(_eq(cut.segments[i], full.segments[i]), "same segment as the unbounded walk");
+            sum += exactIn ? cut.segments[i].capIn : cut.segments[i].capOut;
+            if (i + 1 < cut.segments.length) {
+                assertLt(sum, amount, "a segment before the last did not cover the amount");
+            }
+        }
+        assertGe(sum, amount, "the walked segments cover the amount");
+        assertLe(cut.steps, full.steps, "no more steps than the unbounded walk");
+    }
+
+    function test_V211_walkStopsOnceTheAmountIsCovered() public {
+        PoolKey memory gap = _gapKey();
+        _checkBounded(gap, true, 100e6, 1);
+        _checkBounded(gap, true, 400e6, 3);
+        _checkBounded(gap, false, 100e18, 1);
+        _checkBounded(gap, false, 400e18, 3);
+        // the v1 pool: one range holds the whole trade
+        _checkBounded(keyV2, true, 1_000e6, 1);
+        _checkBounded(keyV2, false, 990e18, 1);
+    }
+
+    /// @dev An amount the pool cannot cover walks to its bound exactly as before, and is truncated there.
+    function test_V211_walkPastTheLiquidityIsTheUnboundedWalk() public {
+        PoolKey memory gap = _gapKey();
+        PoolVenue.Pool memory full = PoolVenue.read(manager, gap.toId(), gap.tickSpacing, true, _lim(true));
+        PoolVenue.Pool memory cut =
+            PoolVenue.readTo(manager, gap.toId(), gap.tickSpacing, true, _lim(true), 1_000_000e6, true);
+        assertEq(cut.segments.length, full.segments.length, "all segments");
+        assertEq(cut.truncated, full.truncated, "truncated as the unbounded walk");
+        assertEq(cut.steps, full.steps, "same steps");
+        assertEq(full.segments.length, 8, "the gapped pool walks 8 segments");
+    }
+
+    /// @dev The walk is what costs gas: a small trade on the v1 pool plans in well under the unbounded walk's cost.
+    function test_V211_planOnTheV1PoolSkipsTheLongWalk() public {
+        _initExact(keyV2);
+        _makers(1);
+        _nextBlock(12);
+        (int24 snap, int56 emaX,) = hookV2.anchorOfX(idV2);
+        _coolAll();
+        uint256 g = gasleft();
+        splitter.planExactIn(keyV2, true, TickMath.MIN_SQRT_PRICE + 1, EXACT_IN_USDC, snap, emaX);
+        g -= gasleft();
+        assertLt(g, 190_000, "planExactIn, 1 maker, cold (M11 before: 228,418)");
+    }
 }

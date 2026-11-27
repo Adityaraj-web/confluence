@@ -74,11 +74,13 @@ library PoolVenue {
     /// @param zeroForOne The direction read.
     /// @param swapFee v4's combined swap fee for that direction, in pips.
     /// @param truncated The walk stopped at a bound before the limit: the last segment is not a hard end.
+    /// @param steps Swap-loop steps the walk took, including steps that made no segment (V2-11).
     /// @param segments In walk order, current range first; at most `MAX_TICK_RANGES`.
     struct Pool {
         bool zeroForOne;
         uint24 swapFee;
         bool truncated;
+        uint256 steps;
         Segment[] segments;
     }
 
@@ -93,6 +95,21 @@ library PoolVenue {
         view
         returns (Pool memory p)
     {
+        return readTo(manager, id, tickSpacing, zeroForOne, sqrtPriceLimitX96, type(uint256).max, true);
+    }
+
+    /// @notice STUB (V2-11 red step): behaves as `read`.
+    function readTo(
+        IPoolManager manager,
+        PoolId id,
+        int24 tickSpacing,
+        bool zeroForOne,
+        uint160 sqrtPriceLimitX96,
+        uint256 amount,
+        bool exactIn
+    ) internal view returns (Pool memory p) {
+        amount;
+        exactIn;
         p.zeroForOne = zeroForOne;
         (uint160 sqrtP, int24 tick, uint24 protocolFee, uint24 lpFee) = manager.getSlot0(id);
         if (sqrtP == 0) return p; // not initialised
@@ -116,9 +133,11 @@ library PoolVenue {
             count: 0
         });
         Segment[] memory buf = new Segment[](MAX_TICK_RANGES);
-        for (uint256 step = 0; step < MAX_TICK_STEPS && w.count < MAX_TICK_RANGES && w.sqrtP != w.limit; step++) {
+        uint256 steps;
+        for (; steps < MAX_TICK_STEPS && w.count < MAX_TICK_RANGES && w.sqrtP != w.limit; steps++) {
             _step(w, buf);
         }
+        p.steps = steps;
         p.truncated = w.sqrtP != w.limit; // a gap and the end of the liquidity look the same (D-30)
         uint256 count = w.count;
         assembly ("memory-safe") {
