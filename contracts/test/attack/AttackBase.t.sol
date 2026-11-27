@@ -34,6 +34,7 @@ contract HostileToken {
     bool public noReturn;
     bool public returnFalse;
     bool public revertApproveZero;
+    bool public usdtApprove; // USDT: approve reverts non-zero -> non-zero
     mapping(address => bool) public blocked;
 
     address public target; // call-out; zero = off
@@ -63,6 +64,13 @@ contract HostileToken {
         returnFalse = v;
     }
 
+    /// @dev Real USDT behaviour: no return value on transfer, transferFrom and approve, and approve reverts when both the
+    ///      old and the new allowance are non-zero.
+    function setUsdt(bool v) external {
+        noReturn = v;
+        usdtApprove = v;
+    }
+
     function setRevertApproveZero(bool v) external {
         revertApproveZero = v;
     }
@@ -82,6 +90,7 @@ contract HostileToken {
 
     function approve(address spender, uint256 amount) external returns (bool) {
         if (revertApproveZero && amount == 0) revert("approve zero");
+        if (usdtApprove && amount != 0 && allowance[msg.sender][spender] != 0) revert("usdt approve");
         _probe(4);
         allowance[msg.sender][spender] = amount;
         _probe(8);

@@ -113,6 +113,23 @@ contract A09ReentryTest is AttackBase {
         }
     }
 
+    /// @dev The output token amount the trader received in the last swap attempt of `_try`'s kind, from balances.
+    function _tryGot(PoolKey memory kk, bool zfo, int256 spec, address tokOut) internal returns (bool ok, uint256 got) {
+        uint256 b = IERC20(tokOut).balanceOf(trader);
+        ok = _try(kk, zfo, spec);
+        got = IERC20(tokOut).balanceOf(trader) - b;
+    }
+
+    function _poolOnlyGot(PoolKey memory kk, bool zfo, int256 spec, address tokOut) internal returns (uint256 got) {
+        uint256 s0 = vm.snapshotState();
+        _unregisterAll(kk);
+        uint256 b = IERC20(tokOut).balanceOf(trader);
+        (bool ok,) = address(this).call(abi.encodeCall(this.exSwap, (kk, trader, zfo, spec)));
+        require(ok, "pool-only swap failed");
+        got = IERC20(tokOut).balanceOf(trader) - b;
+        require(vm.revertToStateAndDelete(s0), "revert failed");
+    }
+
     function _poolOnlyPasses(PoolKey memory kk, bool zfo, int256 spec) internal returns (bool ok) {
         uint256 s = vm.snapshotState();
         _unregisterAll(kk);
@@ -185,6 +202,25 @@ contract A09ReentryTest is AttackBase {
         emit log_string(o);
     }
 
+    /// @dev True when `ret` (the PoolManager's wrapped hook error, `HookCallFailed`/`WrappedError`) carries `sel`.
+    function _wraps(bytes memory ret, bytes4 sel) internal pure returns (bool) {
+        if (ret.length < 36) return false;
+        for (uint256 i; i + 4 <= ret.length; i++) {
+            bytes4 w;
+            assembly {
+                w := mload(add(add(ret, 0x20), i))
+            }
+            if (w == sel) return true;
+        }
+        return false;
+    }
+
+    function _countSkipRevert() internal view returns (uint256 n) {
+        for (uint256 i; i < evs[0].length; i++) {
+            if (evs[0][i].status == LegStatus.SKIP_REVERT) n++;
+        }
+    }
+
     function _nFilled(ConfluenceHook.Leg[] storage legs) internal view returns (uint256 n) {
         for (uint256 i; i < legs.length; i++) {
             if (legs[i].status == LegStatus.FILLED) n++;
@@ -206,10 +242,10 @@ contract A09ReentryTest is AttackBase {
 
     // ------------------------------------------------------------------------------------------ re-entry
 
-    /// @dev A call-out inside the outer leg's router call (the Aqua pull of the output) gets at most `LEG_GAS_CAP`
-    ///      (640,000 gas, `ConfluenceHook.sol:494`): a nested hooked swap there cannot run its plan and legs. It is
-    ///      contained by gas: it degrades to pool-only, the outer leg fills, nothing is left over.
-    function test_V210_reentryNestedSwapInsideLegIsGasStarved() public {
+    /// @dev A call-out inside the outer leg's router call (the Aqua pull of the output) is also rejected by the lock
+    ///      (D-38); before the lock it was only contained by `LEG_GAS_CAP` (a nested swap there got no legs). The
+    ///      nested `beforeSwap` reverts `Reentered`, the outer swap is unaffected.
+    function test_V210_reentryNestedSwapInsideLegIsRejected() public {
         _setup2();
         re = new Reenterer();
         _fundRe(50_000e6, 50_000e18);
@@ -218,21 +254,18 @@ contract A09ReentryTest is AttackBase {
         int256 t0 = _thief();
         bool ok = _try(k, zfo, -int256(IN_USDC));
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_USDC));
-        _row("nested swap inside the router call (gas-capped)", ok, poolOk, _thief() - t0);
-        _statusLine("STATUS");
+        _row("nested swap inside the router call (lock)", ok, poolOk, _thief() - t0);
         assertTrue(ok, "the outer swap passes");
-        assertTrue(host.fired() && host.lastOk(), "the nested swap ran inside the outer leg and passed");
-        assertEq(evs.length, 2, "nested event, then outer event");
-        assertEq(_nFilled(evs[0]), 0, "the nested swap got no legs: gas-starved");
-        assertEq(_nFilled(evs[1]), 2, "both outer legs filled");
-        assertEq(re.hookBefore(), re.hookAfter(), "hook balance unchanged by the nested swap");
+        assertTrue(host.fired() && !host.lastOk(), "the nested swap was attempted and rejected");
+        assertTrue(_wraps(host.lastRet(), ConfluenceHook.Reentered.selector), "rejected by the lock");
+        assertEq(evs.length, 1, "only the outer event");
+        assertEq(_nFilled(evs[0]), 2, "both outer legs filled");
         _assertAfterAttack(address(host));
     }
 
-    /// @dev Nested hooked swap with FULL gas on the SAME pool: the host token calls out from `approve`, which the hook
-    ///      runs in its own frame (`ConfluenceHook.sol:491`), right after the outer leg's allowance is set. Host is the
-    ///      input token. The nested swap's `forceApprove(ROUTER, x2)` and reset to 0 must not zero or overwrite the outer
-    ///      approval: the outer leg must still fill. Books exact, hook balance unchanged by the nested swap.
+    /// @dev Full-gas call-out from `approve` (`ConfluenceHook.sol:491`, host = input token) right after the outer
+    ///      allowance is set: the nested swap is rejected by the lock, so it cannot zero or overwrite the outer approval.
+    ///      The outer swap is correct: both legs filled, books exact, hook empty, allowances 0.
     function test_V210_reentryNestedSwapSamePoolInputToken() public {
         _setup2();
         re = new Reenterer();
@@ -245,28 +278,28 @@ contract A09ReentryTest is AttackBase {
             1
         );
         int256 t0 = _thief();
-        bool ok = _try(k, zfo, -int256(IN_HOST));
+        uint256 usdc0 = IERC20(USDC).balanceOf(makers[0]) + IERC20(USDC).balanceOf(makers[1]);
+        (bool ok, uint256 got) = _tryGot(k, zfo, -int256(IN_HOST), USDC);
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_HOST));
-        _row("nested swap, same pool, host=input, full gas", ok, poolOk, _thief() - t0);
-        _statusLine("STATUS");
+        _row("nested swap, same pool, host=input, full gas (lock)", ok, poolOk, _thief() - t0);
         assertTrue(ok, "the outer swap passes");
-        assertTrue(host.fired() && host.lastOk(), "the nested swap ran and passed");
-        assertEq(evs.length, 2, "nested event, then outer event");
-        assertGt(_nFilled(evs[0]), 0, "non-vacuous: the nested swap filled a leg");
-        assertEq(re.hookBefore(), re.hookAfter(), "hook token balance unchanged by the nested swap (:465)");
-        _assertAfterAttack(address(host));
-        (uint256 inn, uint256 out) = _sumEvents();
-        uint256 mIn = host.balanceOf(makers[0]) + host.balanceOf(makers[1]) - 200_000e18;
-        uint256 mOut = 200_000e6 - IERC20(USDC).balanceOf(makers[0]) - IERC20(USDC).balanceOf(makers[1]);
-        assertEq(mIn, inn, "makers received exactly the events' inputs");
-        assertEq(mOut, out, "makers gave exactly the events' outputs");
+        assertTrue(host.fired() && !host.lastOk(), "the nested swap was attempted and rejected");
+        assertTrue(_wraps(host.lastRet(), ConfluenceHook.Reentered.selector), "rejected by the lock");
+        assertEq(_thief() - t0, 0, "the attacker gained and lost nothing");
+        assertEq(evs.length, 1, "only the outer event");
+        assertEq(_nFilled(evs[0]), 2, "outer approval intact: both legs filled");
+        (, uint256 out) = _sumEvents();
+        assertGe(got, out, "trader got at least the legs' output");
         assertEq(
-            uint256(evs[1][0].status), LegStatus.FILLED, "outer approval not zeroed or overwritten by the inner reset"
+            usdc0 - IERC20(USDC).balanceOf(makers[0]) - IERC20(USDC).balanceOf(makers[1]),
+            out,
+            "makers gave the legs' output"
         );
+        _assertAfterAttack(address(host));
     }
 
-    /// @dev The same with the nested swap on a second hooked pool (other fee and spacing) that has its own maker on the
-    ///      same token: legs on the same token while the outer leg's allowance is live.
+    /// @dev The same with the nested swap aimed at a second hooked pool on the same token: the lock is global to the
+    ///      hook, so it is rejected too.
     function test_V210_reentryNestedSwapSecondPool() public {
         _setup2();
         PoolKey memory k2 = _hostilePoolOn(3000, 30);
@@ -283,16 +316,13 @@ contract A09ReentryTest is AttackBase {
         int256 t0 = _thief();
         bool ok = _try(k, zfo, -int256(IN_HOST));
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_HOST));
-        _row("nested swap, second pool, host=input, full gas", ok, poolOk, _thief() - t0);
-        _statusLine("STATUS");
+        _row("nested swap, second pool, host=input, full gas (lock)", ok, poolOk, _thief() - t0);
         assertTrue(ok, "the outer swap passes");
-        assertTrue(host.fired() && host.lastOk(), "the nested swap on the second pool ran and passed");
-        assertEq(evs.length, 2, "nested event, then outer event");
-        assertGt(_nFilled(evs[0]), 0, "non-vacuous: the nested swap filled a leg");
-        assertEq(re.hookBefore(), re.hookAfter(), "hook token balance unchanged by the nested swap (:465)");
+        assertTrue(host.fired() && !host.lastOk(), "the nested swap was attempted and rejected");
+        assertTrue(_wraps(host.lastRet(), ConfluenceHook.Reentered.selector), "rejected by the lock");
+        assertEq(evs.length, 1, "only the outer event");
+        assertEq(_nFilled(evs[0]), 2, "both outer legs filled");
         _assertAfterAttack(address(host));
-        assertEq(uint256(evs[1][0].status), LegStatus.FILLED, "outer approval not zeroed by the inner reset");
-        assertEq(uint256(evs[1][1].status), LegStatus.FILLED, "outer leg 1 filled");
     }
 
     /// @dev Host is the output token; inside the Aqua pull the attacker donates host tokens to the hook, so the
@@ -322,25 +352,32 @@ contract A09ReentryTest is AttackBase {
         _assertAfterAttack(address(host));
     }
 
-    /// @dev H1: slot 0's maker is a contract; during its own leg it calls `unregister`, which pops a slot, so the
-    ///      loop's `slots[1]` is out of bounds.
-    function test_V210_reentryUnregisterMidLoop() public {
+    /// @dev H1: slot 0's maker is a contract; during its own leg it calls `unregister`, `register` and `evict` (three
+    ///      swaps from one snapshot). The lock rejects each, the slots are untouched, both legs fill.
+    function test_V210_reentryRegistryCallsRejectedDuringLegs() public {
         k = _hostilePool();
         re = new Reenterer();
         _joinHost(k, address(re), 100_000e18, 100_000e6, _pf(3_000_000));
         _joinHost(k, makers[1], 100_000e18, 100_000e6, _pf(3_000_000));
         bool zfo = _usdcIn(k);
-        host.arm(
-            address(re),
-            abi.encodeCall(Reenterer.exec, (address(hookV2), abi.encodeCall(ConfluenceHook.unregister, (k)))),
-            2,
-            1
-        );
-        bool ok = _try(k, zfo, -int256(IN_USDC));
-        bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_USDC));
-        _row("unregister mid-loop (H1)", ok, poolOk, 0);
-        assertTrue(ok, "the outer swap passes");
-        _assertAfterAttack(address(host));
+        bytes[3] memory calls = [
+            abi.encodeCall(ConfluenceHook.unregister, (k)),
+            abi.encodeCall(ConfluenceHook.register, (k, _pf(3_000_000))),
+            abi.encodeCall(ConfluenceHook.evict, (k, makers[1]))
+        ];
+        for (uint256 i; i < 3; i++) {
+            uint256 s0 = vm.snapshotState();
+            host.arm(address(re), abi.encodeCall(Reenterer.exec, (address(hookV2), calls[i])), 2, 1);
+            bool ok = _try(k, zfo, -int256(IN_USDC));
+            assertTrue(ok, "the outer swap passes");
+            assertTrue(host.fired(), "the call-out ran");
+            assertFalse(re.execOk(), "the registry call was rejected");
+            assertEq(bytes4(re.execRet()), ConfluenceHook.Reentered.selector, "by the lock");
+            assertEq(hookV2.strategiesOf(k.toId()).length, 2, "slots untouched");
+            assertEq(_nFilled(evs[0]), 2, "both legs filled");
+            _assertAfterAttack(address(host));
+            require(vm.revertToStateAndDelete(s0), "revert failed");
+        }
     }
 
     /// @dev The token calls `PoolManager.take` for the PoolManager's USDC: the debt is the caller's, and `unlock`
@@ -369,74 +406,91 @@ contract A09ReentryTest is AttackBase {
 
     // ------------------------------------------------------------------------------------------ token behaviours
 
-    function test_V210_feeOnTransferOutput() public {
+    /// @dev PINNED residual risk (THREATS.md): a fee-on-transfer output token. The hook settles the balance it
+    ///      measured, the PoolManager receives less, `unlock` reverts `CurrencyNotSettled` after the hook has returned
+    ///      (outside any hook try/catch). Pool-only passes. Reverts only for the pool of that token; no funds move.
+    function test_V210_pinned_feeOnTransferOutputReverts() public {
         _setup2();
         bool zfo = _usdcIn(k);
         host.setFeeBps(100);
         bool ok = _try(k, zfo, -int256(IN_USDC));
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_USDC));
-        _row("fee-on-transfer, host=output", ok, poolOk, 0);
-        assertTrue(ok, "a leg's token fee must not fail the swap");
+        _row("fee-on-transfer, host=output (pinned)", ok, poolOk, 0);
+        assertFalse(ok, "pinned: reverts");
+        assertTrue(poolOk, "pool-only passes: the legs cause it");
         _assertAfterAttack(address(host));
     }
 
-    function test_V210_feeOnTransferInput() public {
+    /// @dev PINNED: fee-on-transfer input. v4 itself reverts (the trader's settle is short), so pool-only fails too.
+    function test_V210_pinned_feeOnTransferInputReverts() public {
         _setup2();
         bool zfo = !_usdcIn(k);
         host.setFeeBps(100);
         bool ok = _try(k, zfo, -int256(IN_HOST));
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_HOST));
-        _row("fee-on-transfer, host=input", ok, poolOk, 0);
-        assertTrue(ok, "a leg's token fee must not fail the swap");
+        _row("fee-on-transfer, host=input (pinned)", ok, poolOk, 0);
+        assertFalse(ok, "pinned: reverts");
+        assertFalse(poolOk, "v4 itself reverts: not the hook");
         _assertAfterAttack(address(host));
     }
 
-    /// @dev Host is the input token: the approval reset to 0 (`ConfluenceHook.sol:502`) reverts.
-    function test_V210_revertsOnApproveZero() public {
+    /// @dev PINNED residual risk: a token that reverts on `approve(0)` (host = input). The approval reset at
+    ///      `ConfluenceHook.sol:502` is outside the try/catch. Not a standard token; reverts only that pool's legged swaps.
+    function test_V210_pinned_approveZeroRevertReverts() public {
         _setup2();
         bool zfo = !_usdcIn(k);
         host.setRevertApproveZero(true);
         bool ok = _try(k, zfo, -int256(IN_HOST));
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_HOST));
-        _row("approve(0) reverts, host=input (H3)", ok, poolOk, 0);
-        assertTrue(ok, "the approval reset must not fail the swap");
+        _row("approve(0) reverts, host=input (pinned)", ok, poolOk, 0);
+        assertFalse(ok, "pinned: reverts");
+        assertTrue(poolOk, "pool-only passes: the legs cause it");
         _assertAfterAttack(address(host));
     }
 
-    /// @dev USDT-shaped token returns nothing; the hook settles through `CurrencySettler`'s `IERC20Minimal.transfer`.
-    function test_V210_noReturnTokenOutput() public {
+    /// @dev H4 with real USDT behaviour (no return value on transfer, transferFrom and approve; approve reverts
+    ///      non-zero to non-zero), host = output token: the swap passes and fills its legs.
+    function test_V210_usdtTokenOutput() public {
         _setup2();
         bool zfo = _usdcIn(k);
-        host.setNoReturn(true);
-        bool ok = _try(k, zfo, -int256(IN_USDC));
+        host.setUsdt(true);
+        (bool ok, uint256 got) = _tryGot(k, zfo, -int256(IN_USDC), zfo == _usdcIn(k) ? address(host) : USDC);
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_USDC));
-        _row("no-return token, host=output (H4)", ok, poolOk, 0);
-        assertTrue(ok, "a no-return token must not fail the swap");
+        _row("USDT-shaped token, host=output (H4)", ok, poolOk, 0);
+        assertTrue(ok, "a USDT-shaped token must not fail the swap");
+        assertGt(got, 0, "the trader received the output");
+        assertEq(_nFilled(evs[0]), 2, "both legs filled");
         _assertAfterAttack(address(host));
     }
 
-    function test_V210_noReturnTokenInput() public {
+    /// @dev H4 with real USDT behaviour (no return value on transfer, transferFrom and approve; approve reverts
+    ///      non-zero to non-zero), host = input token: the swap passes and fills its legs.
+    function test_V210_usdtTokenInput() public {
         _setup2();
         bool zfo = !_usdcIn(k);
-        host.setNoReturn(true);
-        bool ok = _try(k, zfo, -int256(IN_HOST));
+        host.setUsdt(true);
+        (bool ok, uint256 got) = _tryGot(k, zfo, -int256(IN_HOST), zfo == _usdcIn(k) ? address(host) : USDC);
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_HOST));
-        _row("no-return token, host=input (H4)", ok, poolOk, 0);
-        assertTrue(ok, "a no-return token must not fail the swap");
+        _row("USDT-shaped token, host=input (H4)", ok, poolOk, 0);
+        assertTrue(ok, "a USDT-shaped token must not fail the swap");
+        assertGt(got, 0, "the trader received the output");
+        assertEq(_nFilled(evs[0]), 2, "both legs filled");
         _assertAfterAttack(address(host));
     }
 
-    /// @dev Latent H4 on the input side: a no-return input token only reverts when a leg fails and its input is settled
-    ///      back through `CurrencySettler`. A blocklisted maker makes the leg fail.
-    function test_V210_noReturnTokenInputFailedLeg() public {
+    /// @dev H4's latent path with USDT behaviour on the input side: a leg fails (a blocklisted maker), its input is
+    ///      settled back through the no-return token.
+    function test_V210_usdtTokenInputFailedLeg() public {
         _setup2();
         bool zfo = !_usdcIn(k);
-        host.setNoReturn(true);
+        host.setUsdt(true);
         host.setBlocked(makers[0], true);
         bool ok = _try(k, zfo, -int256(IN_HOST));
         bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_HOST));
-        _row("no-return token, host=input, one leg fails (H4)", ok, poolOk, 0);
+        _row("USDT-shaped token, host=input, one leg fails (H4)", ok, poolOk, 0);
         assertTrue(ok, "a failed leg's settle-back must not fail the swap");
+        assertEq(uint256(evs[0][0].status), LegStatus.SKIP_REVERT, "the blocked maker's leg is skipped");
+        assertEq(uint256(evs[0][1].status), LegStatus.FILLED, "the other leg fills");
         _assertAfterAttack(address(host));
     }
 
@@ -453,15 +507,36 @@ contract A09ReentryTest is AttackBase {
         _assertAfterAttack(address(host));
     }
 
-    /// @dev The issuer blocklists the hook; host is the input token, so `take` to the hook reverts (H5).
+    /// @dev H5, exact input: the issuer blocklists the hook and host is the input token, so `take` to the hook fails.
+    ///      The legs are `SKIP_REVERT`, nothing is taken, the pool fills the swap exactly as pool-only does.
     function test_V210_blocklistedHookInput() public {
         _setup2();
         bool zfo = !_usdcIn(k);
         host.setBlocked(address(hookV2), true);
-        bool ok = _try(k, zfo, -int256(IN_HOST));
-        bool poolOk = _poolOnlyPasses(k, zfo, -int256(IN_HOST));
-        _row("hook blocklisted, host=input (H5)", ok, poolOk, 0);
+        uint256 po = _poolOnlyGot(k, zfo, -int256(IN_HOST), USDC);
+        (bool ok, uint256 got) = _tryGot(k, zfo, -int256(IN_HOST), USDC);
+        _row("hook blocklisted, host=input, exact in (H5)", ok, true, 0);
         assertTrue(ok, "a blocklisted hook must not fail the swap");
+        assertEq(got, po, "the pool fills the whole swap: exactly pool-only");
+        assertEq(_nFilled(evs[0]), 0, "no leg filled");
+        assertEq(uint256(evs[0][0].status), LegStatus.SKIP_REVERT, "leg 0 SKIP_REVERT");
+        assertEq(uint256(evs[0][1].status), LegStatus.SKIP_REVERT, "leg 1 SKIP_REVERT");
+        _assertAfterAttack(address(host));
+    }
+
+    /// @dev H5, exact output (the trader asks for 990 USDC, paying host).
+    function test_V210_blocklistedHookInputExactOut() public {
+        _setup2();
+        bool zfo = !_usdcIn(k);
+        host.setBlocked(address(hookV2), true);
+        uint256 po = _poolOnlyGot(k, zfo, int256(990e6), USDC);
+        (bool ok, uint256 got) = _tryGot(k, zfo, int256(990e6), USDC);
+        _row("hook blocklisted, host=input, exact out (H5)", ok, true, 0);
+        assertTrue(ok, "a blocklisted hook must not fail the swap");
+        assertEq(got, po, "exactly pool-only");
+        assertEq(got, 990e6, "the exact output");
+        assertEq(_nFilled(evs[0]), 0, "no leg filled");
+        assertGt(_countSkipRevert(), 0, "non-vacuous: legs were planned and refused");
         _assertAfterAttack(address(host));
     }
 
