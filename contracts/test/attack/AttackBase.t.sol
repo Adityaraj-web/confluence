@@ -38,7 +38,7 @@ contract HostileToken {
 
     address public target; // call-out; zero = off
     bytes public data;
-    uint8 public fireMask; // bit0: transfer, bit1: transferFrom
+    uint8 public fireMask; // bit0 transfer, bit1 transferFrom, bit2 approve (before), bit3 approve (after the allowance is set)
     uint256 public fireAt; // 1-based count of qualifying calls since arming
     uint256 public calls; // qualifying calls since arming
     bool public fired;
@@ -82,7 +82,9 @@ contract HostileToken {
 
     function approve(address spender, uint256 amount) external returns (bool) {
         if (revertApproveZero && amount == 0) revert("approve zero");
+        _probe(4);
         allowance[msg.sender][spender] = amount;
+        _probe(8);
         return _ret(true);
     }
 
@@ -230,20 +232,33 @@ abstract contract AttackBase is SplitBase {
     function _hostilePool() internal returns (PoolKey memory k) {
         if (address(safeRouter) == address(0)) _attackInit();
         host = new HostileToken();
+        host.mint(trader, 100_000e18);
+        host.mint(attacker, 100_000e18);
+        deal(USDC, attacker, 1_000_000e6);
+        for (uint256 i; i < 2; i++) {
+            vm.startPrank(i == 0 ? trader : attacker);
+            IERC20(USDC).approve(address(safeRouter), type(uint256).max);
+            host.approve(address(safeRouter), type(uint256).max);
+            vm.stopPrank();
+        }
+        return _hostilePoolOn(POOL_FEE, TICK_SPACING);
+    }
+
+    /// @dev Another hooked pool on the same hostile token (a different fee or spacing gives a different pool id).
+    function _hostilePoolOn(uint24 fee, int24 spacing) internal returns (PoolKey memory k) {
         bool usdc0 = USDC < address(host);
         (address c0, address c1) = usdc0 ? (USDC, address(host)) : (address(host), USDC);
         k = PoolKey({
             currency0: Currency.wrap(c0),
             currency1: Currency.wrap(c1),
-            fee: POOL_FEE,
-            tickSpacing: TICK_SPACING,
+            fee: fee,
+            tickSpacing: spacing,
             hooks: IHooks(address(hookV2))
         });
         uint160 sp = anchorSqrtPriceX96(usdc0);
         int24 tick = manager.initialize(k, sp);
-        int24 centre = _floorToSpacing(tick);
-        int24 lo = centre - HALF_RANGE;
-        int24 hi = centre + HALF_RANGE;
+        int24 lo = (tick / spacing) * spacing - 600;
+        int24 hi = (tick / spacing) * spacing + 600;
         host.mint(deployer, SEED_MUMB);
         deal(USDC, deployer, SEED_USDC);
         uint128 liq = LiquidityAmounts.getLiquidityForAmounts(
@@ -264,16 +279,6 @@ abstract contract AttackBase is SplitBase {
             ""
         );
         vm.stopPrank();
-        host.mint(trader, 100_000e18);
-        host.mint(attacker, 100_000e18);
-        deal(USDC, attacker, 1_000_000e6);
-        for (uint256 i; i < 3; i++) {
-            address who = i == 0 ? trader : (i == 1 ? attacker : address(this));
-            vm.startPrank(who);
-            IERC20(USDC).approve(address(safeRouter), type(uint256).max);
-            host.approve(address(safeRouter), type(uint256).max);
-            vm.stopPrank();
-        }
         hostKey = k;
         // records the anchor (a 1 raw unit swap is eaten whole by the fee, so the price does not move)
         _hSwap(k, trader, usdc0, -1);
