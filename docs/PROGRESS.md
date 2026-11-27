@@ -375,6 +375,6 @@ Entry format:
   - MUT5 drift always passes: killed (A13 fuzz, A11).
 - **Carry-overs:**
   - **For V2-11:** per-leg hook overhead 156,173 gas around a burning leg (A05); D-39 gas: +121 pool-only, +320 / +349 legged; the table is in `A00GasTable`.
-  - **For V2-12:** flash-loaned depth evicts the smallest real maker for gas only (D-38; needs a stake, delay or minimum age if the owner wants it closed); the splitter-trust assumption (verifying a deployment includes the splitter bytecode); wide-domain caps outside `register`'s domain panic (pinned, unreachable); retire the v1 tests per V2-12.
+  - **For V2-12:** scenario 6, flash-loaned depth: fix or accept as residual. It evicts the smallest real maker for gas only (D-38; a fix needs a stake, delay or minimum age); the splitter-trust assumption (verifying a deployment includes the splitter bytecode); wide-domain caps outside `register`'s domain panic (pinned, unreachable); retire the v1 tests per V2-12.
   - **Unsupported tokens (THREATS.md):** fee-on-transfer (both sides), `approve(0)` revert and ERC-777/1363 callbacks beyond the lock are residual risks with pinning tests.
 - Open issues: none new.
