@@ -119,7 +119,7 @@ contract ConfluenceSplitter {
         IConfluenceHookView h = IConfluenceHookView(address(key.hooks));
         IPoolManager pm = h.poolManager();
         PoolId id = key.toId();
-        PoolVenue.Pool memory pool = PoolVenue.read(pm, id, key.tickSpacing, zeroForOne, sqrtPriceLimitX96);
+        PoolVenue.Pool memory pool = PoolVenue.readTo(pm, id, key.tickSpacing, zeroForOne, sqrtPriceLimitX96, amountIn, true);
         MakerVenue.Maker[] memory ms =
             MakerVenue.read(pm, key, h.bandGuard(), h.strategiesOf(id), zeroForOne, snapTick, emaTickX);
 

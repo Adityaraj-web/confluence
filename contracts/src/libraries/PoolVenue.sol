@@ -98,7 +98,12 @@ library PoolVenue {
         return readTo(manager, id, tickSpacing, zeroForOne, sqrtPriceLimitX96, type(uint256).max, true);
     }
 
-    /// @notice STUB (V2-11 red step): behaves as `read`.
+    /// @notice The walk for a swap of `amount` (V2-11, lever 1): `read`, stopped as soon as the walked segments cover
+    ///         the swap. `exactIn` says what `amount` counts: input (their `capIn`) or output (their `capOut`).
+    /// @dev Everything past the segment that covers `amount` is never used by the split or by pool-only, so the
+    ///      reads are skipped (a 1,000 USDC swap on a one-range pool took 16 bitmap steps before). A walk that stops
+    ///      this way is not `truncated`: its last segment is a real end for this swap. The segments are the unbounded
+    ///      walk's first ones, field for field. `read` is this with `amount = type(uint256).max`.
     function readTo(
         IPoolManager manager,
         PoolId id,
@@ -108,8 +113,6 @@ library PoolVenue {
         uint256 amount,
         bool exactIn
     ) internal view returns (Pool memory p) {
-        amount;
-        exactIn;
         p.zeroForOne = zeroForOne;
         (uint160 sqrtP, int24 tick, uint24 protocolFee, uint24 lpFee) = manager.getSlot0(id);
         if (sqrtP == 0) return p; // not initialised
@@ -134,11 +137,15 @@ library PoolVenue {
         });
         Segment[] memory buf = new Segment[](MAX_TICK_RANGES);
         uint256 steps;
-        for (; steps < MAX_TICK_STEPS && w.count < MAX_TICK_RANGES && w.sqrtP != w.limit; steps++) {
+        uint256 covered;
+        for (; steps < MAX_TICK_STEPS && w.count < MAX_TICK_RANGES && w.sqrtP != w.limit && covered < amount; steps++) {
+            uint256 before = w.count;
             _step(w, buf);
+            if (w.count > before) covered += exactIn ? buf[w.count - 1].capIn : buf[w.count - 1].capOut;
         }
         p.steps = steps;
-        p.truncated = w.sqrtP != w.limit; // a gap and the end of the liquidity look the same (D-30)
+        // a gap and the end of the liquidity look the same (D-30); a walk that covered the amount is not truncated
+        p.truncated = w.sqrtP != w.limit && covered < amount;
         uint256 count = w.count;
         assembly ("memory-safe") {
             mstore(buf, count) // shrink to the segments found (count <= MAX_TICK_RANGES)
