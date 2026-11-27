@@ -6,7 +6,7 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -14,7 +14,6 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IAqua} from "@1inch/aqua/src/interfaces/IAqua.sol";
 import {ISwapVM} from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import {TakerTraitsLib} from "@1inch/swap-vm/src/libs/TakerTraits.sol";
-import {CurrencySettler} from "@uniswap/v4-core/test/utils/CurrencySettler.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {
     BeforeSwapDelta,
@@ -46,11 +45,13 @@ contract ConfluenceHook is IHooks {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
     using SafeERC20 for IERC20;
-    using CurrencySettler for Currency;
+    using CurrencyLibrary for Currency;
     using ProtocolFeeLibrary for uint24;
 
     /// @dev `beforeSwap` was called by an address other than the PoolManager.
     error NotPoolManager();
+    /// @dev `beforeSwap`, `register`, `unregister` or `evict` was entered while a swap's leg stage is running (D-38).
+    error Reentered();
     /// @dev A hook callback this contract does not implement.
     error HookNotImplemented();
     /// @dev The pool has no price (`slot0.sqrtPriceX96 == 0`). Tick 0 is a valid price, so the anchor must not read as
@@ -189,6 +190,9 @@ contract ConfluenceHook is IHooks {
     mapping(PoolId => AnchorLib.Anchor) internal _anchors;
     /// @dev At most `MAX_STRATEGIES` entries per pool.
     mapping(PoolId => Slot[]) internal _slots;
+    /// @dev Set from before the leg stage's `take` to after its last `settle`: while it is set, a call into
+    /// `beforeSwap` or the registry reverts `Reentered`. Transient, so it can never stay set (D-38).
+    bool private transient _busy;
 
     /// @param _poolManager The v4 PoolManager.
     /// @param _splitter The deployed `ConfluenceSplitter` (D-35).
@@ -242,6 +246,7 @@ contract ConfluenceHook is IHooks {
     /// @dev Needs the pool's anchor (a swap has happened): depth is priced at the recorded snapshot, never at spot
     /// (D-33). Check order: key, pool exists, anchor, template and Aqua, depth.
     function register(PoolKey calldata key, StrategyTemplate.Params calldata p) external {
+        if (_busy) revert Reentered();
         PoolId id = _checkKey(key);
         int24 snap = _snapshotTick(id);
         address c0 = Currency.unwrap(key.currency0);
@@ -287,6 +292,7 @@ contract ConfluenceHook is IHooks {
     /// @notice Remove the caller's own slot. Only the maker can; nobody else's call changes it.
     /// @dev Reverts `NotRegistered` when the caller has no slot in the pool named by `key`.
     function unregister(PoolKey calldata key) external {
+        if (_busy) revert Reentered();
         PoolId id = key.toId();
         Slot[] storage slots = _slots[id];
         (bool found, uint256 at) = _find(slots, msg.sender);
@@ -301,6 +307,7 @@ contract ConfluenceHook is IHooks {
     /// @notice Remove `maker`'s slot when its strategy is docked or its real depth is zero. Anyone may call; it
     /// reverts `NotEvictable` for a strategy that is shipped and has depth, and `NotRegistered` for an unknown maker.
     function evict(PoolKey calldata key, address maker) external {
+        if (_busy) revert Reentered();
         PoolId id = key.toId();
         Slot[] storage slots = _slots[id];
         (bool found, uint256 at) = _find(slots, maker);
@@ -351,6 +358,7 @@ contract ConfluenceHook is IHooks {
         returns (bytes4, BeforeSwapDelta, uint24)
     {
         if (msg.sender != address(poolManager)) revert NotPoolManager();
+        if (_busy) revert Reentered();
         PoolId id = key.toId();
         AnchorLib.Anchor memory a = _anchors[id];
         if (a.lastBlock < block.number) {
@@ -449,7 +457,14 @@ contract ConfluenceHook is IHooks {
             return (0, 0);
         }
         IERC20 tokenOut = IERC20(Currency.unwrap(cOut));
-        cIn.take(poolManager, address(this), planned, false);
+        _busy = true;
+        // A failing `take` (a blocklisted hook, a token that refuses) fails every leg and leaves the swap to the pool.
+        try poolManager.take(cIn, address(this), planned) {}
+        catch {
+            _busy = false;
+            _refuseAll(p, legs);
+            return (0, 0);
+        }
         uint256 outBefore = tokenOut.balanceOf(address(this));
         for (uint256 i; i < n; i++) {
             uint256 x = p.amountIn[i];
@@ -463,8 +478,25 @@ contract ConfluenceHook is IHooks {
         }
         // The output actually received: a router failure moves nothing, a fill moves exactly its output.
         sumOut = tokenOut.balanceOf(address(this)) - outBefore;
-        if (planned > sumIn) cIn.settle(poolManager, address(this), planned - sumIn, false);
-        if (sumOut > 0) cOut.settle(poolManager, address(this), sumOut, false);
+        if (planned > sumIn) _settle(cIn, planned - sumIn);
+        if (sumOut > 0) _settle(cOut, sumOut);
+        _busy = false;
+    }
+
+    /// @dev Marks every planned leg `SKIP_REVERT` (the `take` failed, so no leg ran).
+    function _refuseAll(Plan memory p, Leg[] memory legs) private pure {
+        for (uint256 i; i < legs.length; i++) {
+            if (p.amountIn[i] > 0) legs[i].status = LegStatus.SKIP_REVERT;
+        }
+    }
+
+    /// @dev Pays `amount` of `c` to the PoolManager: sync, transfer, settle. The transfer is `CurrencyLibrary.transfer`
+    /// (`Currency.sol:40`), which accepts a token that returns nothing (USDT) as well as one that returns true; v4-core's
+    /// test `CurrencySettler.settle` (`CurrencySettler.sol:27-33`) decodes a `bool` and reverts on no return data (D-38).
+    function _settle(Currency c, uint256 amount) private {
+        poolManager.sync(c);
+        c.transfer(address(poolManager), amount);
+        poolManager.settle();
     }
 
     /// @dev One leg: the order rebuilt from the slot (its hash must still be the registered one), `GAS_RESERVE` kept

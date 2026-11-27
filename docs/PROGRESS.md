@@ -361,3 +361,20 @@ Entry format:
   - **For Phase 3 (gas limit):** `minHookGas` is a sufficient bound, not a gas estimate. The UI uses `eth_estimateGas` for the gas limit and `minHookGas` only as a floor check, because 2.87M for 3 legs would look alarming in a wallet.
   - **For Phase 3:** the UI calls V4Quoter for totals and the Lens for the breakdown; a deeper Lens walk would need a parameterised `PoolVenue` (revisit only if the UI needs an exact pool-only breakdown past the walk). The UI pins the hook address when calling the Lens. `simulate()` (per-leg execution outcomes, including `SKIP_REVERT` and `SKIP_GAS`) only if the UI needs it.
 - Open issues: none new.
+
+## 2026-11-27 · V2-10 · Adityaraj · Done (spec-reviewer pending, not merged)
+- **What shipped:** `contracts/test/attack/` A00 gas table, A01 to A15 (`AttackBase` fixture, hostile token, `SafeSwapRouter`), `test/attack/v1/` (A01, A06: both attacks pay on v1); `docs/THREATS.md`; D-38 (scenario record, spec corrections), D-39 (three narrow hook fixes). Hook change (D-39): no-return-safe `sync` / `transfer` / `settle`, `poolManager.take` inside try/catch, one transient lock over `beforeSwap`, `register`, `unregister`, `evict`; runtime 20,633 to 20,819 B (+186), stop rule met (D-39).
+- **Final run:** `forge test` 317 passed, 0 failed, 0 skipped (49 suites; baseline 257); Python reference 15 OK; `forge fmt --check test/attack` clean.
+- **Not merged, no tags.** Splitters and `BandGuardV2` stripped hashes unchanged from `main` (Splitter 0xc922518a..., SplitterOut 0x3b500a8b..., BandGuardV2 0x7193dcce...). Hook stripped hash `main` 0xc3631e8b... to now 0x88a717ab... (D-39 only).
+- **v1 results (recomputed):** same-block push: attacker +29.641527 USDC, Priya -38.574122; displacement: displacer +19.704921 as the maker, victim 980.295 MUMB instead of 987.158.
+- **Mutations (5, each applied, file run, restored):**
+  - MUT1 guard band reads spot: **survived A01 to A03** (the hook's own band cap is the first line; a spot-reading guard matters only for a direct router fill by a non-exclusive strategy's taker). Killed by `V204BandGuardFork` (3 tests: `bandUsesSnapshotNotSpot`, `sameBlockAttackRefused`, `quoteEqualsSwapWithinBlock`). Added `A01.test_V210_pushOntoAMispricedMakerCannotOpenTheBand` for the hook-side line.
+  - MUT2 never-worse check removed: **survived** the A14 tests at first; added `test_V210_planWorseThanItsOwnPoolOnlyIsRefused`; now killed.
+  - MUT3 approval reset removed: killed (A05 `burningGuardIsCutAtTheLegGasCap`, A09 `blocklistedHookOutput`, `pinned_approveZeroRevertReverts`).
+  - MUT4 depth = virtual only: killed (A04 two tests, A06 two tests).
+  - MUT5 drift always passes: killed (A13 fuzz, A11).
+- **Carry-overs:**
+  - **For V2-11:** per-leg hook overhead 156,173 gas around a burning leg (A05); D-39 gas: +121 pool-only, +320 / +349 legged; the table is in `A00GasTable`.
+  - **For V2-12:** scenario 6, flash-loaned depth: fix or accept as residual. It evicts the smallest real maker for gas only (D-38; a fix needs a stake, delay or minimum age); the splitter-trust assumption (verifying a deployment includes the splitter bytecode); wide-domain caps outside `register`'s domain panic (pinned, unreachable); retire the v1 tests per V2-12.
+  - **Unsupported tokens (THREATS.md):** fee-on-transfer (both sides), `approve(0)` revert and ERC-777/1363 callbacks beyond the lock are residual risks with pinning tests.
+- Open issues: none new.
