@@ -10,6 +10,7 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {ConfluenceSplitter, LegStatus, Plan} from "../ConfluenceSplitter.sol";
 import {ConfluenceSplitterOut} from "../ConfluenceSplitterOut.sol";
 import {MakerVenue} from "./MakerVenue.sol";
+import {PoolVenue} from "./PoolVenue.sol";
 
 /// @title PlanCheck
 /// @notice The hook's decision about a splitter's plan, in one place (V2-09, D-37): the capped call to the splitter,
@@ -34,11 +35,23 @@ library PlanCheck {
     uint256 internal constant PLAN_GAS_CAP = 1_700_000;
     /// @notice Bytes of an encoded `Plan`; any other return length means pool-only.
     uint256 internal constant PLAN_BYTES = 36 * 32;
+    /// @dev Worst-case gas of one swap-loop step of the pool that crosses an initialised tick (V2-11, lever 8): cold
+    ///      reads, two fresh tick slots written, both fee-growth globals nonzero. Measured 55,873 (first crossing) and
+    ///      51,523 to 53,330 after it (`test_V211_stepCost`); 60,000 keeps 7% on the worst.
+    uint256 internal constant STEP_GAS = 60_000;
+    /// @dev The reserve for a walk that did not cover the amount (its crossings are unknown) and for the gate before the
+    ///      plan call (the crossings are not known until it returns): `GAS_RESERVE` plus `PoolVenue.MAX_TICK_STEPS` steps.
+    uint256 internal constant RESERVE_MAX = GAS_RESERVE + STEP_GAS * PoolVenue.MAX_TICK_STEPS;
 
     uint256 private constant _BPS = 10_000;
     // casting to 'uint128' is safe: int128 max is positive
     // forge-lint: disable-next-line(unsafe-typecast)
     uint256 private constant _MAX_INT128 = uint256(uint128(type(int128).max));
+
+    /// @notice STUB (V2-11 red step).
+    function reserve(Plan memory) internal pure returns (uint256) {
+        return GAS_RESERVE;
+    }
 
     /// @dev Calls the splitter with a gas cap (low-level, so malformed data cannot revert), then checks the plan.
     /// Returns `LegStatus.FILLED` for a plan to run, `SKIP_GAS` or `SKIP_PLAN` for pool-only. `target` is the

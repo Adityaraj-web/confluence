@@ -12,9 +12,10 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 
-import {LegStatus} from "../../src/ConfluenceSplitter.sol";
+import {LegStatus, Plan} from "../../src/ConfluenceSplitter.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
 import {MakerVenue} from "../../src/libraries/MakerVenue.sol";
+import {PlanCheck} from "../../src/libraries/PlanCheck.sol";
 import {PoolVenue} from "../../src/libraries/PoolVenue.sol";
 import {SplitBase} from "../base/SplitBase.t.sol";
 
@@ -724,5 +725,64 @@ contract V211GasTest is SplitBase {
         _fund(trader, 0, 1_000_000e6);
         (uint256 gh,) = _m11(keyV2, true, true, 500_000e6);
         console2.log("v1 pool: 1,000 USDC / 500,000 USDC (runs to the price limit)", gv, gh);
+    }
+
+    // ------------------------------------------------------------------------------------------ lever 8: the reserve
+
+    function _planOn(PoolKey memory k, bool exactIn, uint256 amount) internal returns (Plan memory p) {
+        _nextBlock(12);
+        (int24 snap, int56 emaX,) = hookV2.anchorOfX(k.toId());
+        p = exactIn
+            ? splitter.planExactIn(k, true, TickMath.MIN_SQRT_PRICE + 1, amount, snap, emaX)
+            : splitterOut.planExactOut(k, true, TickMath.MIN_SQRT_PRICE + 1, amount, snap, emaX);
+    }
+
+    /// @dev The plan carries the walk's step count (bits 8 and up of `truncated`, bit 0 the flag), and the hook's
+    ///      reserve for it is the base plus a step's worst case per step; a walk that did not cover the amount gets the
+    ///      stated maximum.
+    function test_V211_planCarriesTheStepsAndTheReserveFollows() public {
+        PoolKey memory gap = _gapKey();
+        _initExact(gap);
+        _gasMakers(gap, 3);
+        uint256[3] memory usdc = [uint256(100), 600, 1_000];
+        for (uint256 i; i < 3; i++) {
+            Plan memory p = _planOn(gap, true, usdc[i] * 1e6);
+            PoolVenue.Pool memory pool =
+                PoolVenue.readTo(manager, gap.toId(), gap.tickSpacing, true, TickMath.MIN_SQRT_PRICE + 1, usdc[i] * 1e6, true);
+            assertEq(p.truncated & 1, pool.truncated ? 1 : 0, "the truncated flag is bit 0");
+            assertEq(p.truncated >> 8, pool.steps, "the steps are carried");
+            assertGt(pool.steps, 0, "the walk took steps");
+            assertEq(
+                PlanCheck.reserve(p),
+                pool.truncated ? PlanCheck.RESERVE_MAX : PlanCheck.GAS_RESERVE + PlanCheck.STEP_GAS * pool.steps,
+                "exact-in reserve"
+            );
+        }
+        // past the pool's liquidity the walk stops at its bound: the stated maximum
+        Plan memory big = _planOn(gap, true, 5_000e6);
+        assertEq(big.truncated & 1, 1, "5,000 USDC is past the walk");
+        assertEq(PlanCheck.reserve(big), PlanCheck.RESERVE_MAX, "stated maximum when the walk did not cover the amount");
+        // exact output
+        Plan memory o = _planOn(gap, false, 100e18);
+        assertEq(o.truncated >> 8, PoolVenue.readTo(manager, gap.toId(), gap.tickSpacing, true, TickMath.MIN_SQRT_PRICE + 1, 100e18, false).steps, "exact-out steps");
+        assertEq(PlanCheck.reserve(o), PlanCheck.GAS_RESERVE + PlanCheck.STEP_GAS * (o.truncated >> 8), "exact-out reserve");
+    }
+
+    /// @dev The hook refuses a plan whose step count is past the walk's bound, or whose flag bits are not 0 / 1 plus a
+    ///      step count: a reserve the hook cannot bound is no reserve.
+    function test_V211_checkBoundsTheStepCount() public {
+        PoolKey memory gap = _gapKey();
+        _initExact(gap);
+        _gasMakers(gap, 3);
+        Plan memory p = _planOn(gap, true, 1_000e6);
+        assertTrue(PlanCheck.check(p, manager, USDC, 1_000e6, 3, true), "premise: the honest plan passes");
+        p.truncated = (PoolVenue.MAX_TICK_STEPS + 1) << 8;
+        assertFalse(PlanCheck.check(p, manager, USDC, 1_000e6, 3, true), "steps past MAX_TICK_STEPS");
+        p = _planOn(gap, true, 1_000e6);
+        p.truncated |= 2;
+        assertFalse(PlanCheck.check(p, manager, USDC, 1_000e6, 3, true), "a flag bit that is not defined");
+        p = _planOn(gap, true, 1_000e6);
+        p.truncated = PoolVenue.MAX_TICK_STEPS << 8;
+        assertTrue(PlanCheck.check(p, manager, USDC, 1_000e6, 3, true), "steps at the bound are accepted");
     }
 }
