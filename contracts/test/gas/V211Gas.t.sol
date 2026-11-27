@@ -694,4 +694,35 @@ contract V211GasTest is SplitBase {
             assertLt(g, ceil[i], string.concat("planExactOut gas, ", vm.toString(uint256(ns[i])), " makers"));
         }
     }
+
+    // ------------------------------------------------------------------------------------------ lever 8: step cost
+
+    /// @dev Pool-only swap gas on the gapped pool by number of initialised ticks crossed, cold, after a swap in the
+    ///      other direction (both fee-growth globals nonzero: each crossing writes two fresh tick slots, the worst
+    ///      case). Logs the cost per crossing.
+    function test_V211_stepCost() public {
+        PoolKey memory gap = _gapKey();
+        _initExact(gap);
+        _swap(gap, trader, false, -int256(1e18), ""); // MUMB in: the other global becomes nonzero
+        bn0 = block.number;
+        ts0 = block.timestamp;
+        uint256 base = vm.snapshotState();
+        uint256[8] memory amts = [uint256(50), 250, 400, 520, 600, 700, 850, 960];
+        uint256 g0;
+        for (uint256 i; i < amts.length; i++) {
+            vm.revertToState(base);
+            (uint256 g,) = _m11(gap, true, true, amts[i] * 1e6);
+            uint256 c = _crossed(gap);
+            if (i == 0) g0 = g;
+            console2.log("usdc / crossed / gas / per crossing", amts[i], c, g);
+            if (c > 0) console2.log("   per crossing", (g - g0) / c);
+        }
+        // hops: a swap that runs the walk bound through empty bitmap words on the v1 pool
+        vm.revertToState(base);
+        (uint256 gv,) = _m11(keyV2, true, true, 1_000e6);
+        vm.revertToState(base);
+        _fund(trader, 0, 1_000_000e6);
+        (uint256 gh,) = _m11(keyV2, true, true, 500_000e6);
+        console2.log("v1 pool: 1,000 USDC / 500,000 USDC (runs to the price limit)", gv, gh);
+    }
 }
