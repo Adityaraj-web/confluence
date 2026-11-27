@@ -51,6 +51,6 @@ Solo build by Adityaraj from Nov 11, 2026. Design: `docs/ARCHITECTURE-v2.md`. Bu
 | V2-07 | Hint-free split in beforeSwap | M3 | V2-01, V2-02, V2-03, V2-06 | Done | D-35; **M3 met: 991549859869719173233 wei with empty hookData (v1 hinted 991549823315669231761)** |
 | V2-08 | Exact output | M4 Completeness | V2-07 | Done (not merged) | D-36; second splitter `ConfluenceSplitterOut` (exact-input `ConfluenceSplitter` byte-identical to V2-07) |
 | V2-09 | Quoting parity and Lens | M4 | V2-07, V2-08 | Done (not merged) | D-37; `ConfluenceLens` (13,434 B), `PlanCheck` shared with the hook; Lens = V4Quoter = swap, both modes; `poolExact` false only past the walk (V4Quoter exact there) |
-| V2-10 | Attack suite | M5 Proof | V2-04 to V2-08 | Todo | |
+| V2-10 | Attack suite | M5 Proof | V2-04 to V2-08 | Done (not merged) | D-38, D-39; `test/attack/` A00-A15 and v1 A01/A06; hook: no-return-safe settle, `take` in try/catch, transient lock (+186 B); `docs/THREATS.md` |
 | V2-11 | Gas budget | M5 | V2-07 to V2-09 | Todo | |
 | V2-12 | Invariants v2 and Phase 1 exit | M5 | all | Todo | Phase 1 exit |
