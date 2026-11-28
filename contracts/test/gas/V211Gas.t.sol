@@ -401,7 +401,7 @@ contract V211GasTest is SplitBase {
     uint256 internal constant V_LEGIT = 0;
     uint256 internal constant V_BURN_GUARD = 1;
     uint256 internal constant V_BURN_SPLITTER = 2;
-    uint256 internal constant FIXTURES = 4;
+    uint256 internal constant FIXTURES = 5;
 
     /// @dev Report mode: a reverting hooked swap is counted instead of failing the test. (Counters are memory values:
     ///      `vm.revertToState` rolls this contract's storage back too.)
@@ -428,7 +428,8 @@ contract V211GasTest is SplitBase {
     }
 
     /// @dev Fixture `id`: 0 = gapped pool, 1 maker, 1,000 USDC; 1 = gapped, 3 makers, 2,500 USDC (pool crosses ticks);
-    ///      2 = gapped, 3 makers, 100 USDC; 3 = the v1 pool, 6 makers, 1,000 USDC. Exact output: the same size in MUMB
+    ///      2 = gapped, 3 makers, 100 USDC; 3 = the v1 pool, 6 makers, 1,000 USDC; 4 = gapped, 3 makers, several crossings
+    ///      inside the walk bound (600 USDC in / 500 MUMB out). Exact output: the same size in MUMB
     ///      times 0.99. Returns the pool and the amount, with the next block reached (the anchor update runs).
     function _fixture(uint256 id, bool exactIn) internal returns (PoolKey memory k, uint256 amount) {
         if (id == 3) {
@@ -440,8 +441,14 @@ contract V211GasTest is SplitBase {
             k = _gapKey();
             _initExact(k);
             _gasMakers(k, id == 0 ? 1 : 3);
-            uint256 usdc = id == 0 ? 1_000 : (id == 1 ? 2_500 : 100);
-            amount = exactIn ? usdc * 1e6 : (usdc * 99 / 100) * 1e18;
+            if (id == 4) {
+                // Inside the walk bound with several crossings: 600 USDC (4 pool crossings, 5 steps) / 500 MUMB out
+                // (3 crossings, 4 steps), neither truncated.
+                amount = exactIn ? 600e6 : 500e18;
+            } else {
+                uint256 usdc = id == 0 ? 1_000 : (id == 1 ? 2_500 : 100);
+                amount = exactIn ? usdc * 1e6 : (usdc * 99 / 100) * 1e18;
+            }
         }
         _nextBlock(12);
     }
@@ -1128,5 +1135,40 @@ contract V211GasTest is SplitBase {
                 console2.log("   pool-only out / gas hooked / gas pool-only", outP, gh, gp);
             }
         }
+    }
+
+    /// @dev Report: plan steps, truncation and the pool-only crossings for sizes on the gapped pool with 3 makers.
+    function test_V211_crossingsReport() public {
+        PoolKey memory k = _gapKey();
+        _initExact(k);
+        _gasMakers(k, 3);
+        _nextBlock(12);
+        uint256 base = vm.snapshotState();
+        for (uint256 m; m < 2; m++) {
+            uint256[6] memory sz = m == 0
+                ? [uint256(200e6), 400e6, 600e6, 800e6, 900e6, 990e6]
+                : [uint256(300e18), 400e18, 500e18, 600e18, 700e18, 800e18];
+            for (uint256 j; j < 6; j++) {
+                vm.revertToState(base);
+                Plan memory p = _planOn(k, m == 0, sz[j]);
+                uint256 s0 = vm.snapshotState();
+                _skipLegs();
+                _swap(k, trader, true, m == 0 ? -int256(sz[j]) : int256(sz[j]), "");
+                uint256 c = _crossed(k);
+                vm.revertToState(s0);
+                console2.log(m == 0 ? "in  size" : "out size", sz[j] / (m == 0 ? 1e6 : 1e18));
+                console2.log("   truncated / steps / pool-only crossings", p.truncated & 1, p.truncated >> 8, c);
+            }
+        }
+    }
+
+    /// @dev The reserve constants at their D-40 values: a change to any of them (or to `MAX_TICK_STEPS`) fails here.
+    function test_V211_reserveConstantsArePinned() public pure {
+        assertEq(PlanCheck.GAS_RESERVE, 170_000, "GAS_RESERVE");
+        assertEq(PlanCheck.STEP_GAS, 60_000, "STEP_GAS");
+        assertEq(PoolVenue.MAX_TICK_STEPS, 16, "MAX_TICK_STEPS");
+        assertEq(PlanCheck.RESERVE_MAX, 1_130_000, "RESERVE_MAX");
+        assertEq(PlanCheck.MIN_LEG_GAS, 160_000, "MIN_LEG_GAS");
+        assertEq(PlanCheck.RESERVE_MAX + PlanCheck.MIN_LEG_GAS, 1_290_000, "the hook's gate");
     }
 }
