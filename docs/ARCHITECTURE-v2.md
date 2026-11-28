@@ -82,22 +82,23 @@ BandGuardV2 passes a fill only if:
 - execution price within `bandBps` of the snapshot price, and
 - |snap − ema| within `driftTicks`.
 
-## 5. Parameters (proposed; V2-11 measures and fixes each with a DECISIONS entry)
+## 5. Parameters (fixed by V2-11, one DECISIONS entry each: D-41 to D-47)
 
-| Name | Proposed | Where | Why |
+| Name | Value | Where | Why |
 | --- | --- | --- | --- |
-| `MAX_STRATEGIES` | 6 | hook constant | bounds reads per swap |
-| `MAX_LEGS` | 3 | hook constant | each leg is a router call (~152k gas in v1) |
+| `MAX_STRATEGIES` | 6 | hook constant | bounds reads per swap; a 6-maker swap costs 234,425 gas more than a 3-maker one (D-42) |
+| `MAX_LEGS` | 3 | hook constant | each leg is a router call, about 215,000 gas measured per leg (D-43) |
 | `MAX_TICK_RANGES` | 8 | hook constant | bounds the pool walk |
 | `MAX_TICK_STEPS` | 16 | `PoolVenue` constant (D-30) | bounds the swap-loop steps the walk reads, including steps with no liquidity or width, which make no segment |
-| `MIN_LEG_BPS` | 50 (0.5%) | hook constant | dust legs cost more gas than they save |
-| `EMA_HALF_LIFE` | 60 s | hook constant | manipulation cost vs lag |
+| `MIN_LEG_BPS` | 50 (0.5%) | hook constant | a dust filter, not an economic threshold; assumptions labelled in D-44 |
+| `EMA_HALF_LIFE` | 60 s | hook constant | manipulation cost vs lag; A02, A11, A13 (D-45) |
 | `bandBps` | default 200 | maker, strategy bytes | as v1 |
 | `driftTicks` | default 300 | maker, strategy bytes | largest snap–EMA gap the maker accepts |
 | `exclusive` | default true | maker, strategy bytes | only the hook may take |
-| `GAS_RESERVE`, `LEG_GAS_CAP` | 170,000 / 640,000 | hook constants | D-20's sweep re-run on the split (V2-07, D-35): need about 120,000 |
-| `MIN_LEG_GAS` | 160,000 | hook constant | from v1 D-20 (a router leg about 152k) |
-| `PLAN_GAS_CAP` | 1,700,000 | hook constant | 2x the worst splitter call measured (838,822: 6 makers, 8 segments) |
+| `GAS_RESERVE`, `LEG_GAS_CAP` | 170,000 / 640,000 | hook constants | D-20's sweep re-run on the split (V2-11, D-46); `GAS_RESERVE` covers a pool with no tick crossing |
+| `STEP_GAS`, `RESERVE_MAX` | 60,000 / 1,130,000 | `PlanCheck` constants | the reserve follows the pool's walk steps; worst measured crossing 55,873; `RESERVE_MAX` = `GAS_RESERVE` + 16 x `STEP_GAS`; the hook's gate is `RESERVE_MAX + MIN_LEG_GAS` = 1,290,000 (D-40) |
+| `MIN_LEG_GAS` | 160,000 | hook constant | from v1 D-20; a leg uses about 142k |
+| `PLAN_GAS_CAP` | 1,700,000 | hook constant | about 3.4x the worst honest plan measured (501,003: 6 makers) |
 | `MAX_SOLVES` | 2 | splitter constant | one re-solve after dropping legs (D-35) |
 
 ## 6. Failure model

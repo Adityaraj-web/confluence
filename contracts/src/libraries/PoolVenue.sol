@@ -136,8 +136,8 @@ library PoolVenue {
             count: 0
         });
         Segment[] memory buf = new Segment[](MAX_TICK_RANGES);
-        uint256 steps;
-        uint256 covered;
+        uint256 steps = 0;
+        uint256 covered = 0;
         for (; steps < MAX_TICK_STEPS && w.count < MAX_TICK_RANGES && w.sqrtP != w.limit && covered < amount; steps++) {
             uint256 before = w.count;
             _step(w, buf);

@@ -52,5 +52,5 @@ Solo build by Adityaraj from Nov 11, 2026. Design: `docs/ARCHITECTURE-v2.md`. Bu
 | V2-08 | Exact output | M4 Completeness | V2-07 | Done (not merged) | D-36; second splitter `ConfluenceSplitterOut` (exact-input `ConfluenceSplitter` byte-identical to V2-07) |
 | V2-09 | Quoting parity and Lens | M4 | V2-07, V2-08 | Done (not merged) | D-37; `ConfluenceLens` (13,434 B), `PlanCheck` shared with the hook; Lens = V4Quoter = swap, both modes; `poolExact` false only past the walk (V4Quoter exact there) |
 | V2-10 | Attack suite | M5 Proof | V2-04 to V2-08 | Done (not merged) | D-38, D-39; `test/attack/` A00-A15 and v1 A01/A06; hook: no-return-safe settle, `take` in try/catch, transient lock (+186 B); `docs/THREATS.md` |
-| V2-11 | Gas budget | M5 | V2-07 to V2-09 | Todo | |
+| V2-11 | Gas budget | M5 | V2-07 to V2-09 | Done (not merged) | D-40 to D-47; amount-bounded walk, `readOut` fold, reserve that follows the pool's work (hook +174 B); 3 makers exact in 1,037,807 gas (was 1,109,900); `contracts/.gas-snapshot` (25), `docs/GAS.md`, CI `gas.yml`; gate 1,290,000 gas |
 | V2-12 | Invariants v2 and Phase 1 exit | M5 | all | Todo | Phase 1 exit |

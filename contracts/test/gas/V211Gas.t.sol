@@ -1013,7 +1013,7 @@ contract V211GasTest is SplitBase {
         }
     }
 
-    // ------------------------------------------------------------------------------------------ ceilings (D-41)
+    // ------------------------------------------------------------------------------------------ ceilings (D-47)
 
     /// @dev Each ceiling is the M11 value measured on this tree plus 5%, rounded up to 1,000. 6 makers, 3 legs, v1 pool:
     ///      index = direction x 2 + mode (USDC in exact-in, USDC in exact-out, MUMB in exact-in, MUMB in exact-out).
@@ -1094,6 +1094,38 @@ contract V211GasTest is SplitBase {
                 (bool ok,, uint256 filled) = _probe(k, q.minHookGas + 300_000, m == 0, amount);
                 assertTrue(ok, "the swap passes at minHookGas + the pool's share");
                 assertEq(filled, planned, string.concat("fixture ", vm.toString(id), ": every planned leg fills"));
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------ price gain (GAS.md)
+
+    /// @dev Price gain and gas overhead at 500 / 1,000 / 2,000 / 5,000 USDC exact in on the v1 pool: 1 maker (M3) and
+    ///      3 makers, against the same pool with the makers unregistered (pool-only), from one snapshot, M11 gas.
+    ///      Logs: size, makers, legs filled, MUMB out hooked, MUMB out pool-only, gas hooked, gas pool-only.
+    function test_V211_priceGainTable() public {
+        _initExact(keyV2);
+        bn0 = block.number;
+        ts0 = block.timestamp;
+        uint256 base = vm.snapshotState();
+        uint256[4] memory sizes = [uint256(500), 1_000, 2_000, 5_000];
+        uint256[2] memory ns = [uint256(1), 3];
+        console2.log("size USDC | makers | legs | MUMB out hooked | MUMB out pool-only | gas hooked | gas pool-only");
+        for (uint256 a; a < 2; a++) {
+            for (uint256 z; z < 4; z++) {
+                vm.revertToState(base);
+                _makers(ns[a]);
+                uint256 s0 = vm.snapshotState();
+                uint256 m0 = mumb.balanceOf(trader);
+                (uint256 gh, uint256 fh) = _m11(keyV2, true, true, sizes[z] * 1e6);
+                uint256 outH = mumb.balanceOf(trader) - m0;
+                vm.revertToState(s0);
+                _unregisterAll(keyV2);
+                m0 = mumb.balanceOf(trader);
+                (uint256 gp,) = _m11(keyV2, true, true, sizes[z] * 1e6);
+                uint256 outP = mumb.balanceOf(trader) - m0;
+                console2.log(string.concat(vm.toString(sizes[z]), " USDC, makers ", vm.toString(ns[a])), fh, outH);
+                console2.log("   pool-only out / gas hooked / gas pool-only", outP, gh, gp);
             }
         }
     }
