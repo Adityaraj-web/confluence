@@ -636,23 +636,30 @@ abstract contract SplitBase is RegistryBase, V207Helpers {
     ///      for a 1,000 USDC swap. At every limit where the pool-only swap passes, the split swap must pass.
     function _sweepGasLimits(string memory label) internal returns (uint256 filled) {
         uint256 n = (500_000 - 285_000) / 5_000 + 1;
-        uint256[] memory limits = new uint256[](n + 10);
+        uint256[] memory limits = new uint256[](n + 15);
         for (uint256 i; i < n; i++) {
             limits[i] = 285_000 + i * 5_000;
         }
-        uint256[10] memory high = [
+        // V2-11: the hook's gate rose to RESERVE_MAX + MIN_LEG_GAS (1,290,000, D-40), so five limits were added above it
+        // (1,750,000 to 5,000,000) to keep the sweep reaching limits where the legs fill; the existing ones are unchanged.
+        uint256[15] memory high = [
             uint256(550_000),
             600_000,
             700_000,
             800_000,
             1_000_000,
             1_500_000,
+            1_750_000,
             2_000_000,
+            2_500_000,
             3_000_000,
+            3_500_000,
             4_000_000,
+            4_500_000,
+            5_000_000,
             6_000_000
         ];
-        for (uint256 i; i < 10; i++) {
+        for (uint256 i; i < 15; i++) {
             limits[n + i] = high[i];
         }
         uint256 checked;

@@ -112,6 +112,21 @@ library MakerVenue {
         int56 emaTickX,
         uint256 pmBalanceIn
     ) internal view returns (Maker memory m) {
+        return _load(manager, key, guard, e, zeroForOne, snapTick, emaTickX, pmBalanceIn, false);
+    }
+
+    /// @dev `readOne`'s body, with the caps of the swap's mode (`exactOut`: `capsOut`, else `caps`).
+    function _load(
+        IPoolManager manager,
+        PoolKey memory key,
+        address guard,
+        Entry memory e,
+        bool zeroForOne,
+        int24 snapTick,
+        int56 emaTickX,
+        uint256 pmBalanceIn,
+        bool exactOut
+    ) private view returns (Maker memory m) {
         m.maker = e.maker;
         m.strategyHash = e.strategyHash;
         // The drift check needs no external call, so it goes first.
@@ -143,17 +158,23 @@ library MakerVenue {
         m.x = x;
         m.y = y;
         m.feeE9 = e.params.feeE9;
-        (m.status, m.capMin, m.capIn, m.capOut) =
-            caps(x, y, e.params.feeE9, real(tokenOut, e.maker, y), pmBalanceIn, snapTick, zeroForOne, e.params.bandBps);
+        uint256 outCap = real(tokenOut, e.maker, y);
+        if (exactOut) {
+            (m.status, m.capMin, m.capOut, m.capIn) =
+                capsOut(x, y, e.params.feeE9, outCap, pmBalanceIn, snapTick, zeroForOne, e.params.bandBps);
+        } else {
+            (m.status, m.capMin, m.capIn, m.capOut) =
+                caps(x, y, e.params.feeE9, outCap, pmBalanceIn, snapTick, zeroForOne, e.params.bandBps);
+        }
     }
 
     /// @notice The same makers for an EXACT-OUTPUT swap (V2-08, D-36). The caps are in OUTPUT units: `capMin` is the
     ///         smallest and `capOut` the largest output of one fill that passes the guard, the output cap and the
     ///         PoolManager's balance; `capIn` is the gross input of the fill at `capOut`.
-    /// @dev Built on `readOne`, so the exact-input read path is untouched: a maker `readOne` could not load (drift, hash
-    ///      mismatch, not shipped, docked) keeps that status; a loaded one gets its caps and status from `capsOut`. The
-    ///      checks `readOne` applies before the band (zero reserves, zero caps, a fee at or above 100%, reserves above
-    ///      the maths envelope) are the same in `capsOut`, so a status from either is the same status.
+    /// @dev One load per maker (V2-11, lever 2): the same checks as `readOne` (drift, hash, shipped, docked), then
+    ///      `capsOut` instead of `caps`. Before, `readOut` called `read` (which computed the exact-input caps) and then
+    ///      `capsOut` over it, and read the PoolManager's balance twice. The result is field for field what that gave
+    ///      (`test_V211_readOutEqualsReadThenCapsOut`). A maker that cannot be loaded keeps the status `readOne` gives.
     function readOut(
         IPoolManager manager,
         PoolKey memory key,
@@ -163,25 +184,13 @@ library MakerVenue {
         int24 snapTick,
         int56 emaTickX
     ) internal view returns (Maker[] memory out) {
-        out = read(manager, key, guard, entries, zeroForOne, snapTick, emaTickX);
+        uint256 n = Math.min(entries.length, MAX_MAKERS);
+        out = new Maker[](n);
         address tokenIn = Currency.unwrap(zeroForOne ? key.currency0 : key.currency1);
-        address tokenOut = Currency.unwrap(zeroForOne ? key.currency1 : key.currency0);
         // forge-lint: disable-next-line(calls-loop)
         uint256 pmBalance = IERC20(tokenIn).balanceOf(address(manager));
-        for (uint256 i; i < out.length; i++) {
-            Maker memory m = out[i];
-            // `readOne` leaves the reserves zero for a maker it could not load.
-            if (m.x == 0 || m.y == 0) continue;
-            (m.status, m.capMin, m.capOut, m.capIn) = capsOut(
-                m.x,
-                m.y,
-                m.feeE9,
-                real(tokenOut, m.maker, m.y),
-                pmBalance,
-                snapTick,
-                zeroForOne,
-                entries[i].params.bandBps
-            );
+        for (uint256 i; i < n; i++) {
+            out[i] = _load(manager, key, guard, entries[i], zeroForOne, snapTick, emaTickX, pmBalance, true);
         }
     }
 

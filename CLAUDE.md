@@ -96,10 +96,10 @@ docs/                      ARCHITECTURE-v2.md, specs/V2-*.md, DECISIONS, PROGRES
 - Solidity 0.8.30. TS SDKs `@1inch/swap-vm-sdk` 0.4.0, `@1inch/aqua-sdk` 0.3.0, exact.
 - SwapVM sorts tokenA < tokenB; v4 sorts currency0 < currency1. They line up.
 - v1 reference numbers (D-21): 1,000 USDC pool-only 984934194542570551127 wei MUMB; hinted best (hint 550000000) 991549823315669231761 wei.
-- Proposed constants (ARCHITECTURE-v2 section 5) are fixed only by V2-11.
+- Constants (ARCHITECTURE-v2 section 5) were fixed by V2-11, D-40 to D-47: `MAX_STRATEGIES` 6, `MAX_LEGS` 3, `MAX_TICK_RANGES` 8, `MAX_TICK_STEPS` 16, `MIN_LEG_BPS` 50, `EMA_HALF_LIFE` 60 s, `GAS_RESERVE` 170,000, `LEG_GAS_CAP` 640,000, `MIN_LEG_GAS` 160,000, `PLAN_GAS_CAP` 1,700,000, `STEP_GAS` 60,000, `RESERVE_MAX` 1,130,000. A legged swap needs a gas limit of at least `Lens.minHookGas` + the pool's share, not `eth_estimateGas` (D-40).
 
 ## Hard rules
-- IMPORTANT: Aqua can never make a v4 swap fail. Every router call is inside try/catch; any failure settles back and the pool fills that share.
+- IMPORTANT: Aqua can never make a v4 swap fail where the same swap with every leg skipped (same hooked pool, pool-only) passes, if the pool's own path fits the walk bound (the walk covers the amount within `MAX_TICK_RANGES` segments and `MAX_TICK_STEPS` steps). Past the bound a measured, pinned window of gas limits remains (D-40). Every router call is inside try/catch; any failure settles back and the pool fills that share.
 - The hook holds zero tokens after every swap. Tests assert it.
 - The PoolManager must net to zero. Never fix a delta error by sending extra tokens.
 - A swap's result is never worse than the pool alone from the same state, minus rounding. Tests assert it.

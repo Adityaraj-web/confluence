@@ -64,7 +64,8 @@ contract ConfluenceSplitterOut {
         IConfluenceHookView h = IConfluenceHookView(address(key.hooks));
         IPoolManager pm = h.poolManager();
         PoolId id = key.toId();
-        PoolVenue.Pool memory pool = PoolVenue.read(pm, id, key.tickSpacing, zeroForOne, sqrtPriceLimitX96);
+        PoolVenue.Pool memory pool =
+            PoolVenue.readTo(pm, id, key.tickSpacing, zeroForOne, sqrtPriceLimitX96, amountOut, false);
         MakerVenue.Maker[] memory ms =
             MakerVenue.readOut(pm, key, h.bandGuard(), h.strategiesOf(id), zeroForOne, snapTick, emaTickX);
 
@@ -219,7 +220,8 @@ contract ConfluenceSplitterOut {
         for (uint256 i = 0; i < len && i < PoolVenue.MAX_TICK_RANGES; i++) {
             p.walked += pool.segments[i].capOut;
         }
-        p.truncated = pool.truncated ? 1 : 0;
+        // bit 0: the walk stopped before covering the swap; bits 8 and up: the steps it took (V2-11, lever 8)
+        p.truncated = (pool.truncated ? 1 : 0) | (pool.steps << 8);
         (p.poolOut,,) = PoolVenue.quoteExactOut(pool, p.poolIn);
         (p.poolOnlyOut, given,) = PoolVenue.quoteExactOut(pool, amount);
     }

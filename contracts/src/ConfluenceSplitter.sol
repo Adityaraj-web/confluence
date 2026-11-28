@@ -55,7 +55,8 @@ library LegStatus {
 /// @param poolOnlyOut The pool's output for the whole input, over the walked segments.
 /// @param tail An upper bound on what the pool gives past a truncated walk; 0 at a hard end.
 /// @param walked The input the walked segments take (the sum of their `capIn`).
-/// @param truncated 1 if the walk stopped before the swap's price limit, else 0.
+/// @param truncated Bit 0: 1 if the walk stopped before covering the swap (its crossings are unknown), else 0. Bits 8
+///        and up: the swap-loop steps the walk took, which the hook turns into the gas the pool needs (V2-11).
 struct Plan {
     uint256 poolIn;
     uint256[6] status;
@@ -119,7 +120,8 @@ contract ConfluenceSplitter {
         IConfluenceHookView h = IConfluenceHookView(address(key.hooks));
         IPoolManager pm = h.poolManager();
         PoolId id = key.toId();
-        PoolVenue.Pool memory pool = PoolVenue.read(pm, id, key.tickSpacing, zeroForOne, sqrtPriceLimitX96);
+        PoolVenue.Pool memory pool =
+            PoolVenue.readTo(pm, id, key.tickSpacing, zeroForOne, sqrtPriceLimitX96, amountIn, true);
         MakerVenue.Maker[] memory ms =
             MakerVenue.read(pm, key, h.bandGuard(), h.strategiesOf(id), zeroForOne, snapTick, emaTickX);
 
@@ -270,7 +272,8 @@ contract ConfluenceSplitter {
         for (uint256 i = 0; i < len && i < PoolVenue.MAX_TICK_RANGES; i++) {
             p.walked += pool.segments[i].capIn;
         }
-        p.truncated = pool.truncated ? 1 : 0;
+        // bit 0: the walk stopped before covering the swap; bits 8 and up: the steps it took (V2-11, lever 8)
+        p.truncated = (pool.truncated ? 1 : 0) | (pool.steps << 8);
         (p.poolOut,,) = PoolVenue.quoteExactIn(pool, p.poolIn);
         uint256 used;
         (p.poolOnlyOut, used,) = PoolVenue.quoteExactIn(pool, amount);
