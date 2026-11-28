@@ -378,3 +378,6 @@ Entry format:
   - **For V2-12:** scenario 6, flash-loaned depth: fix or accept as residual. It evicts the smallest real maker for gas only (D-38; a fix needs a stake, delay or minimum age); the splitter-trust assumption (verifying a deployment includes the splitter bytecode); wide-domain caps outside `register`'s domain panic (pinned, unreachable); retire the v1 tests per V2-12.
   - **Unsupported tokens (THREATS.md):** fee-on-transfer (both sides), `approve(0)` revert and ERC-777/1363 callbacks beyond the lock are residual risks with pinning tests.
 - Open issues: none new.
+
+## 2026-11-28 · V2-11 · Adityaraj · IN PROGRESS (entry completed at the end of the spec; not merged)
+- **Carry-over for Phase 3 (replaces V2-09's "use `eth_estimateGas`"):** the UI must send `gasLimit = max(eth_estimateGas, Lens.minHookGas + the pool's share)`. With the hook's gate at `RESERVE_MAX + MIN_LEG_GAS` = 1,290,000 (D-40), a gas limit taken from `eth_estimateGas` alone fills no leg (it finds the pool-only limit); on `main`'s hook it filled 2 of 3 legs. `minHookGas` is now 2,165,265 / 2,957,790 / 3,754,847 for 1 / 2 / 3 legs (was 1,278,346 / 2,070,634 / 2,867,443). Integrators get the same note in `docs/GAS.md`. The swap never fails for this; it takes the pool-only fill with `SKIP_GAS` in the event.

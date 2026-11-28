@@ -217,7 +217,7 @@ contract ConfluenceLens {
         }
         if (count > 0) {
             b.minHookGas =
-                HOOK_ALLOWANCE + planGas + count * (PlanCheck.LEG_GAS_CAP + LEG_ALLOWANCE) + PlanCheck.GAS_RESERVE;
+                HOOK_ALLOWANCE + planGas + count * (PlanCheck.LEG_GAS_CAP + LEG_ALLOWANCE) + PlanCheck.RESERVE_MAX;
         }
         // `p` is the zeroed plan when no plan was made; `count` is then 0 and `p` is not read.
         // forge-lint: disable-next-line(uninitialized-local)

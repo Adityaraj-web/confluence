@@ -450,7 +450,9 @@ contract ConfluenceHook is IHooks {
             planned += p.amountIn[i];
         }
         if (planned == 0) return (0, 0);
-        if (gasleft() < GAS_RESERVE + MIN_LEG_GAS) {
+        // The pool may have to take everything if every leg fails: the plan's own reserve (V2-11, lever 8).
+        uint256 reserve = PlanCheck.reserve(p);
+        if (gasleft() < reserve + MIN_LEG_GAS) {
             for (uint256 i; i < n; i++) {
                 if (p.amountIn[i] > 0) legs[i].status = LegStatus.SKIP_GAS;
             }
@@ -469,7 +471,7 @@ contract ConfluenceHook is IHooks {
         for (uint256 i; i < n; i++) {
             uint256 x = p.amountIn[i];
             if (x == 0) continue;
-            (uint8 status, uint256 out) = _fill(key, slots[i], cIn, cOut, x, p.amountOut[i], exactIn);
+            (uint8 status, uint256 out) = _fill(key, slots[i], cIn, cOut, x, p.amountOut[i], exactIn, reserve);
             legs[i].status = status;
             if (status == LegStatus.FILLED) {
                 (legs[i].amountIn, legs[i].amountOut) = (x, out);
@@ -499,7 +501,7 @@ contract ConfluenceHook is IHooks {
         poolManager.settle();
     }
 
-    /// @dev One leg: the order rebuilt from the slot (its hash must still be the registered one), `GAS_RESERVE` kept
+    /// @dev One leg: the order rebuilt from the slot (its hash must still be the registered one), `reserve` kept
     /// back, exact approval of the leg's gross input `x`, the router call inside try/catch, approval reset to 0. Exact
     /// input swaps `x` with a strict threshold of the planned output `out`; exact output swaps `out` with a strict
     /// threshold of the planned input `x`: either way the router takes exactly `x` and gives exactly `out`, or reverts.
@@ -511,19 +513,20 @@ contract ConfluenceHook is IHooks {
         Currency cOut,
         uint256 x,
         uint256 out,
-        bool exactIn
+        bool exactIn,
+        uint256 reserve
     ) private returns (uint8 status, uint256 got) {
         ISwapVM.Order memory o = StrategyTemplate.order(
             s.maker, StrategyTemplate.program(s.params, poolManager, key, address(bandGuard))
         );
         if (StrategyTemplate.strategyHash(o) != s.strategyHash) return (LegStatus.SKIP_UNDERFUNDED, 0);
         uint256 g = gasleft();
-        if (g < GAS_RESERVE + MIN_LEG_GAS) return (LegStatus.SKIP_GAS, 0);
+        if (g < reserve + MIN_LEG_GAS) return (LegStatus.SKIP_GAS, 0);
         IERC20 tokenIn = IERC20(Currency.unwrap(cIn));
         tokenIn.forceApprove(ROUTER, x);
         status = LegStatus.SKIP_REVERT;
         // forge-lint: disable-start(calls-loop)
-        try ISwapVM(ROUTER).swap{gas: Math.min(g - GAS_RESERVE, LEG_GAS_CAP)}(
+        try ISwapVM(ROUTER).swap{gas: Math.min(g - reserve, LEG_GAS_CAP)}(
             o, Currency.unwrap(cIn), Currency.unwrap(cOut), exactIn ? x : out, _takerData(exactIn, exactIn ? out : x)
         ) returns (
             uint256, uint256 amountOut, bytes32

@@ -411,9 +411,15 @@ contract V211GasTest is SplitBase {
     function _limits() internal pure returns (uint256[] memory l) {
         l = new uint256[](78);
         uint256 n;
-        for (uint256 g = 285_000; g <= 500_000; g += 5_000) l[n++] = g;
-        for (uint256 g = 550_000; g <= 1_000_000; g += 50_000) l[n++] = g;
-        for (uint256 g = 1_100_000; g <= 3_000_000; g += 100_000) l[n++] = g;
+        for (uint256 g = 285_000; g <= 500_000; g += 5_000) {
+            l[n++] = g;
+        }
+        for (uint256 g = 550_000; g <= 1_000_000; g += 50_000) {
+            l[n++] = g;
+        }
+        for (uint256 g = 1_100_000; g <= 3_000_000; g += 100_000) {
+            l[n++] = g;
+        }
         l[n++] = 3_500_000;
         l[n++] = 4_000_000;
         l[n++] = 5_000_000;
@@ -446,7 +452,9 @@ contract V211GasTest is SplitBase {
         try swapRouter.swap{gas: limit}(
             k,
             IPoolManager.SwapParams({
-                zeroForOne: true, amountSpecified: exactIn ? -int256(amount) : int256(amount), sqrtPriceLimitX96: _lim(true)
+                zeroForOne: true,
+                amountSpecified: exactIn ? -int256(amount) : int256(amount),
+                sqrtPriceLimitX96: _lim(true)
             }),
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
@@ -458,8 +466,27 @@ contract V211GasTest is SplitBase {
         vm.stopPrank();
     }
 
-    /// @dev At every limit where the pool-only swap passes, the hooked swap passes and the hook ends clean.
-    function _sweep(PoolKey memory k, bool exactIn, uint256 amount, string memory label)
+    /// @dev The window left open on the fixture whose pool-only path does not fit the walk bound (fixture 1: the pool
+    ///      crosses more ticks than `MAX_TICK_STEPS`, so the walk is truncated and the reserve is the stated maximum, which
+    ///      is below the pool's real need of about 1.31M). Measured on the committed design; pinned so a widening fails:
+    ///      at most `count` failing limits, all within `[lo, hi]`. Every other fixture has no window at all.
+    struct Pin {
+        uint256 count;
+        uint256 lo;
+        uint256 hi;
+    }
+
+    function _pin(uint256 variant, uint256 id, bool exactIn) internal pure returns (Pin memory) {
+        if (id != 1) return Pin(0, 0, 0);
+        if (!exactIn) return Pin(2, 1_500_000, 1_600_000);
+        if (variant == V_LEGIT) return Pin(3, 1_500_000, 1_700_000);
+        if (variant == V_BURN_GUARD) return Pin(12, 1_500_000, 3_000_000);
+        return Pin(14, 1_500_000, 2_800_000);
+    }
+
+    /// @dev At every limit where the pool-only swap passes (same hooked pool, legs skipped), the hooked swap passes and
+    ///      the hook ends clean; the pinned window is the one allowed exception.
+    function _sweep(PoolKey memory k, bool exactIn, uint256 amount, string memory label, Pin memory pin)
         internal
         returns (uint256 checked, uint256 filled, uint256 failures, uint256 maxFailLimit, uint256 minFailLimit)
     {
@@ -467,14 +494,14 @@ contract V211GasTest is SplitBase {
         minFailLimit = type(uint256).max;
         for (uint256 i; i < limits.length; i++) {
             uint256 s = vm.snapshotState();
-            _unregisterAll(k);
+            _skipLegs();
             bool poolOk = _tryAtLimit(k, limits[i], exactIn, amount);
             vm.revertToState(s);
             if (!poolOk) continue;
             checked++;
             vm.recordLogs();
             bool ok = _tryAtLimit(k, limits[i], exactIn, amount);
-            if (!ok && report) {
+            if (!ok && (report || pin.count > 0)) {
                 failures++;
                 maxFailLimit = limits[i];
                 if (limits[i] < minFailLimit) minFailLimit = limits[i];
@@ -489,6 +516,13 @@ contract V211GasTest is SplitBase {
             vm.revertToState(s);
         }
         assertGe(checked, 15, string.concat(label, ": the pool alone passes at enough limits"));
+        if (!report && pin.count > 0) {
+            assertLe(failures, pin.count, string.concat(label, ": the failing window widened (count)"));
+            if (failures > 0) {
+                assertGe(minFailLimit, pin.lo, string.concat(label, ": the failing window widened (low end)"));
+                assertLe(maxFailLimit, pin.hi, string.concat(label, ": the failing window widened (high end)"));
+            }
+        }
     }
 
     function _sweepAll(uint256 variant) internal {
@@ -508,7 +542,7 @@ contract V211GasTest is SplitBase {
                     "fixture ", vm.toString(id), exactIn ? " exact-in" : " exact-out", " variant ", vm.toString(variant)
                 );
                 (uint256 checked, uint256 filled, uint256 failures, uint256 hi, uint256 lo) =
-                    _sweep(k, exactIn, amount, label);
+                    _sweep(k, exactIn, amount, label, _pin(variant, id, exactIn));
                 console2.log(label, checked, filled);
                 if (report) console2.log("   failing limits / lowest / highest", failures, failures == 0 ? 0 : lo, hi);
             }
@@ -555,7 +589,8 @@ contract V211GasTest is SplitBase {
     ///      segments, not truncated, the step count equal to the segments here (no empty steps on this pool).
     function _checkBounded(PoolKey memory k, bool exactIn, uint256 amount, uint256 expectSegments) internal view {
         PoolVenue.Pool memory full = PoolVenue.read(manager, k.toId(), k.tickSpacing, true, _lim(true));
-        PoolVenue.Pool memory cut = PoolVenue.readTo(manager, k.toId(), k.tickSpacing, true, _lim(true), amount, exactIn);
+        PoolVenue.Pool memory cut =
+            PoolVenue.readTo(manager, k.toId(), k.tickSpacing, true, _lim(true), amount, exactIn);
         assertEq(cut.segments.length, expectSegments, "segments walked");
         assertFalse(cut.truncated, "a walk that covered the amount is not truncated");
         uint256 sum;
@@ -747,8 +782,9 @@ contract V211GasTest is SplitBase {
         uint256[3] memory usdc = [uint256(100), 600, 1_000];
         for (uint256 i; i < 3; i++) {
             Plan memory p = _planOn(gap, true, usdc[i] * 1e6);
-            PoolVenue.Pool memory pool =
-                PoolVenue.readTo(manager, gap.toId(), gap.tickSpacing, true, TickMath.MIN_SQRT_PRICE + 1, usdc[i] * 1e6, true);
+            PoolVenue.Pool memory pool = PoolVenue.readTo(
+                manager, gap.toId(), gap.tickSpacing, true, TickMath.MIN_SQRT_PRICE + 1, usdc[i] * 1e6, true
+            );
             assertEq(p.truncated & 1, pool.truncated ? 1 : 0, "the truncated flag is bit 0");
             assertEq(p.truncated >> 8, pool.steps, "the steps are carried");
             assertGt(pool.steps, 0, "the walk took steps");
@@ -764,8 +800,15 @@ contract V211GasTest is SplitBase {
         assertEq(PlanCheck.reserve(big), PlanCheck.RESERVE_MAX, "stated maximum when the walk did not cover the amount");
         // exact output
         Plan memory o = _planOn(gap, false, 100e18);
-        assertEq(o.truncated >> 8, PoolVenue.readTo(manager, gap.toId(), gap.tickSpacing, true, TickMath.MIN_SQRT_PRICE + 1, 100e18, false).steps, "exact-out steps");
-        assertEq(PlanCheck.reserve(o), PlanCheck.GAS_RESERVE + PlanCheck.STEP_GAS * (o.truncated >> 8), "exact-out reserve");
+        assertEq(
+            o.truncated >> 8,
+            PoolVenue.readTo(manager, gap.toId(), gap.tickSpacing, true, TickMath.MIN_SQRT_PRICE + 1, 100e18, false)
+            .steps,
+            "exact-out steps"
+        );
+        assertEq(
+            PlanCheck.reserve(o), PlanCheck.GAS_RESERVE + PlanCheck.STEP_GAS * (o.truncated >> 8), "exact-out reserve"
+        );
     }
 
     /// @dev The hook refuses a plan whose step count is past the walk's bound, or whose flag bits are not 0 / 1 plus a
@@ -784,5 +827,165 @@ contract V211GasTest is SplitBase {
         p = _planOn(gap, true, 1_000e6);
         p.truncated = PoolVenue.MAX_TICK_STEPS << 8;
         assertTrue(PlanCheck.check(p, manager, USDC, 1_000e6, 3, true), "steps at the bound are accepted");
+    }
+
+    // ------------------------------------------------------------------------------------------ gas estimators
+
+    /// @dev "Pool-only" for the never-revert claim: the same hooked pool, makers registered, every leg skipped (both
+    ///      splitters revert, so the plan is SKIP_PLAN and the pool takes the whole amount). Not a hookless pool.
+    function _skipLegs() internal {
+        vm.etch(address(splitter), hex"5f5ffd");
+        vm.etch(address(splitterOut), hex"5f5ffd");
+    }
+
+    /// @dev One hooked swap at `limit`: whether it passed, the gas it used, the legs FILLED. State is restored.
+    function _probe(PoolKey memory k, uint256 limit, bool exactIn, uint256 amount)
+        internal
+        returns (bool ok, uint256 used, uint256 filled)
+    {
+        uint256 s = vm.snapshotState();
+        vm.startPrank(trader);
+        IERC20(USDC).approve(address(swapRouter), type(uint256).max);
+        mumb.approve(address(swapRouter), type(uint256).max);
+        IPoolManager.SwapParams memory sp = IPoolManager.SwapParams({
+            zeroForOne: true, amountSpecified: exactIn ? -int256(amount) : int256(amount), sqrtPriceLimitX96: _lim(true)
+        });
+        vm.recordLogs();
+        uint256 g = gasleft();
+        try swapRouter.swap{gas: limit}(
+            k, sp, PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}), ""
+        ) {
+            ok = true;
+        } catch {}
+        used = g - gasleft();
+        vm.stopPrank();
+        (ConfluenceHook.Leg[] memory legs,) = _legsFrom(vm.getRecordedLogs(), address(hookV2));
+        filled = _countStatus(legs, LegStatus.FILLED);
+        vm.revertToState(s);
+    }
+
+    /// @dev What eth_estimateGas and a wallet would find, per fixture: gasUsed at a high limit, the retries at
+    ///      used*64/63 and +50,000, and a binary search from 21,000 (the lowest limit that passes).
+    function _estimators(bool exactIn) internal {
+        uint256 base = vm.snapshotState();
+        for (uint256 id; id < FIXTURES; id++) {
+            vm.revertToState(base);
+            (PoolKey memory k, uint256 amount) = _fixture(id, exactIn);
+            (, uint256 used, uint256 full) = _probe(k, 8_000_000, exactIn, amount);
+            (bool ok1,, uint256 f1) = _probe(k, used * 64 / 63, exactIn, amount);
+            (bool ok2,, uint256 f2) = _probe(k, used * 64 / 63 + 50_000, exactIn, amount);
+            uint256 lo = 21_000;
+            uint256 hi = used * 64 / 63;
+            while (hi - lo > 500) {
+                uint256 mid = (lo + hi) / 2;
+                (bool okm,,) = _probe(k, mid, exactIn, amount);
+                if (okm) hi = mid;
+                else lo = mid;
+            }
+            (,, uint256 fb) = _probe(k, hi, exactIn, amount);
+            uint256 s0 = vm.snapshotState();
+            _skipLegs();
+            uint256 plo = 21_000;
+            uint256 phi = used * 64 / 63;
+            while (phi - plo > 500) {
+                uint256 mid = (plo + phi) / 2;
+                (bool okp,,) = _probe(k, mid, exactIn, amount);
+                if (okp) phi = mid;
+                else plo = mid;
+            }
+            vm.revertToState(s0);
+            console2.log("   pool-only (same hook, legs skipped) min limit", phi);
+            console2.log(
+                string.concat("fixture ", vm.toString(id), exactIn ? " in" : " out"), "used / legs at high limit:", used
+            );
+            console2.log("   full legs", full);
+            console2.log("   at used*64/63: ok / legs filled", ok1 ? 1 : 0, f1);
+            console2.log("   at +50,000:    ok / legs filled", ok2 ? 1 : 0, f2);
+            console2.log("   binary search: limit / legs filled", hi, fb);
+        }
+    }
+
+    function test_V211_estimators_in() public {
+        _estimators(true);
+    }
+
+    function test_V211_estimators_out() public {
+        _estimators(false);
+    }
+
+    // ------------------------------------------------------------------------------------------ price of the design
+
+    /// @dev Legs filled and the result against the same hooked pool with legs skipped, from one snapshot, ample gas.
+    ///      Exact in: MUMB out (bigger is better). Exact out: USDC in (smaller is better).
+    function _priceCompare(PoolKey memory k, bool exactIn, uint256 amount, string memory label) internal {
+        uint256 s = vm.snapshotState();
+        uint256 u0 = IERC20(USDC).balanceOf(trader);
+        uint256 m0 = mumb.balanceOf(trader);
+        vm.recordLogs();
+        _swap(k, trader, true, exactIn ? -int256(amount) : int256(amount), "");
+        (ConfluenceHook.Leg[] memory legs,) = _legsFrom(vm.getRecordedLogs(), address(hookV2));
+        uint256 filled = _countStatus(legs, LegStatus.FILLED);
+        uint256 hookedOut = mumb.balanceOf(trader) - m0;
+        uint256 hookedIn = u0 - IERC20(USDC).balanceOf(trader);
+        vm.revertToState(s);
+        _skipLegs();
+        _swap(k, trader, true, exactIn ? -int256(amount) : int256(amount), "");
+        uint256 poolOut = mumb.balanceOf(trader) - m0;
+        uint256 poolIn = u0 - IERC20(USDC).balanceOf(trader);
+        vm.revertToState(s);
+        console2.log(label, "legs filled", filled);
+        if (exactIn) console2.log("   MUMB out hooked / pool-only", hookedOut, poolOut);
+        else console2.log("   USDC in hooked / pool-only", hookedIn, poolIn);
+    }
+
+    function test_V211_priceOnTheGappedPool() public {
+        PoolKey memory k = _gapKey();
+        _initExact(k);
+        _gasMakers(k, 3);
+        _nextBlock(12);
+        _priceCompare(k, true, 1_000e6, "exact-in 1,000 USDC");
+        _priceCompare(k, true, 2_500e6, "exact-in 2,500 USDC");
+        _priceCompare(k, true, 5_000e6, "exact-in 5,000 USDC");
+        _priceCompare(k, false, 990e18, "exact-out 990 MUMB");
+        _priceCompare(k, false, 2_475e18, "exact-out 2,475 MUMB");
+        _priceCompare(k, false, 4_950e18, "exact-out 4,950 MUMB");
+    }
+
+    /// @dev The scope of "never reverts where pool-only passes": the pool-only path fits the walk bound (the walk covers
+    ///      the amount, `truncated` is 0) on every fixture except fixture 1, whose window is pinned in `_pin`.
+    function test_V211_onlyFixture1IsPastTheWalkBound() public {
+        uint256 base = vm.snapshotState();
+        for (uint256 id; id < FIXTURES; id++) {
+            for (uint256 m; m < 2; m++) {
+                vm.revertToState(base);
+                (PoolKey memory k, uint256 amount) = _fixture(id, m == 0);
+                Plan memory p = _planOn(k, m == 0, amount);
+                assertEq(
+                    p.truncated & 1,
+                    id == 1 ? 1 : 0,
+                    string.concat("fixture ", vm.toString(id), m == 0 ? " in" : " out", ": walk bound")
+                );
+            }
+        }
+    }
+
+    /// @dev Report for the walk-bound measurement (D-41): the reserve constants and, per fixture and mode, the plan's
+    ///      truncated flag and step count.
+    function test_V211_boundReport() public {
+        console2.log("MAX_TICK_STEPS / RESERVE_MAX / gate", PoolVenue.MAX_TICK_STEPS, PlanCheck.RESERVE_MAX);
+        console2.log("gate (RESERVE_MAX + MIN_LEG_GAS)", PlanCheck.RESERVE_MAX + PlanCheck.MIN_LEG_GAS);
+        uint256 base = vm.snapshotState();
+        for (uint256 id; id < FIXTURES; id++) {
+            for (uint256 m; m < 2; m++) {
+                vm.revertToState(base);
+                (PoolKey memory k, uint256 amount) = _fixture(id, m == 0);
+                Plan memory p = _planOn(k, m == 0, amount);
+                console2.log(
+                    string.concat("fixture ", vm.toString(id), m == 0 ? " in" : " out", ": truncated / steps"),
+                    p.truncated & 1,
+                    p.truncated >> 8
+                );
+            }
+        }
     }
 }

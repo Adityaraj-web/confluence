@@ -99,7 +99,7 @@ docs/                      ARCHITECTURE-v2.md, specs/V2-*.md, DECISIONS, PROGRES
 - Proposed constants (ARCHITECTURE-v2 section 5) are fixed only by V2-11.
 
 ## Hard rules
-- IMPORTANT: Aqua can never make a v4 swap fail. Every router call is inside try/catch; any failure settles back and the pool fills that share.
+- IMPORTANT: Aqua can never make a v4 swap fail where the same swap with every leg skipped (same hooked pool, pool-only) passes, if the pool's own path fits the walk bound (`MAX_TICK_STEPS`). Past the bound a measured, pinned window of gas limits remains (D-40). Every router call is inside try/catch; any failure settles back and the pool fills that share.
 - The hook holds zero tokens after every swap. Tests assert it.
 - The PoolManager must net to zero. Never fix a delta error by sending extra tokens.
 - A swap's result is never worse than the pool alone from the same state, minus rounding. Tests assert it.

@@ -246,7 +246,7 @@ contract V207SplitTest is SplitBase {
         uint256 walked = _walked(k, true);
         uint256 amount = walked + walked / 5;
         Plan memory p = _plan(k, true, amount);
-        assertEq(p.truncated, 1, "premise: truncated");
+        assertEq(p.truncated & 1, 1, "premise: truncated (bit 0; bits 8 and up carry the steps)");
         assertLe(p.poolIn, walked, "premise: the pool's share is within the walk");
         assertGt(p.tail, 0, "premise: a tail is priced");
         uint256 poolOnly = _poolOnly(k, true, amount).got;

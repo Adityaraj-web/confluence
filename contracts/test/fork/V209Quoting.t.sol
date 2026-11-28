@@ -21,6 +21,7 @@ import {ConfluenceSplitterOut} from "../../src/ConfluenceSplitterOut.sol";
 import {MakerVenue} from "../../src/libraries/MakerVenue.sol";
 import {PoolVenue} from "../../src/libraries/PoolVenue.sol";
 import {StrategyTemplate} from "../../src/libraries/StrategyTemplate.sol";
+import {PlanCheck} from "../../src/libraries/PlanCheck.sol";
 import {SplitBase} from "../base/SplitBase.t.sol";
 
 /// @notice V2-09: quoting parity. The Lens (view, breakdown) and the real V4Quoter (runs the hook inside a reverting
@@ -31,10 +32,14 @@ contract V209QuotingTest is SplitBase {
 
     /// @dev Uniswap's V4Quoter, deployed on mainnet at FORK_BLOCK (the spec's [VERIFY]: no deploy needed).
     IV4Quoter internal constant QUOTER = IV4Quoter(0x52F0E24D1c21C8A0cB1e5a5dD6198556BD9E1203);
-    /// @dev `GAS_RESERVE + MIN_LEG_GAS`: the hook's own gas precheck before the plan and before each leg.
-    uint256 internal constant HOOK_PRECHECK = 330_000;
-    /// @dev A tx gas limit that cannot leave 330,000 at the hook: below it the hook's own precheck trips.
+    /// @dev A tx gas limit far below the hook's own precheck (`PlanCheck.RESERVE_MAX + MIN_LEG_GAS`, V2-11 lever 8;
+    ///      it was `GAS_RESERVE + MIN_LEG_GAS` = 330,000 before): the precheck trips.
     uint256 internal constant CLEARLY_LESS = 320_000;
+
+    /// @dev The hook's own gas precheck before the plan: the stated maximum pool reserve plus one leg's minimum.
+    function _hookPrecheck() internal view returns (uint256) {
+        return PlanCheck.RESERVE_MAX + hookV2.MIN_LEG_GAS();
+    }
     /// @dev Gas the pool side of a swap and the router need on top of the hook's bound (pool-only swap: 240,012).
     uint256 internal constant POOL_SIDE_GAS = 300_000;
 
@@ -687,7 +692,7 @@ contract V209QuotingTest is SplitBase {
 
     /// @dev `minHookGas` is a SUFFICIENT bound (not tight) on the gas the hook needs at entry to run every planned leg
     ///      without SKIP_GAS. At the bound plus the pool's own cost every leg fills; below the hook's own precheck
-    ///      (`GAS_RESERVE + MIN_LEG_GAS` = 330,000 at the plan) every slot is SKIP_GAS.
+    ///      (`PlanCheck.RESERVE_MAX + MIN_LEG_GAS` at the plan) every slot is SKIP_GAS.
     function test_V209_lensMinHookGas() public {
         _initExact(keyV2);
         uint256 s = vm.snapshotState();
@@ -715,8 +720,13 @@ contract V209QuotingTest is SplitBase {
             assertEq(_countStatus(l, LegStatus.SKIP_GAS), n, "every slot is SKIP_GAS below the hook's precheck");
             vm.revertToState(s);
         }
-        assertLt(CLEARLY_LESS, HOOK_PRECHECK, "320,000 is under GAS_RESERVE + MIN_LEG_GAS");
-        assertEq(hookV2.GAS_RESERVE() + hookV2.MIN_LEG_GAS(), HOOK_PRECHECK, "the hook's own precheck");
+        assertLt(CLEARLY_LESS, _hookPrecheck(), "320,000 is under the hook's precheck");
+        assertGt(_hookPrecheck(), hookV2.GAS_RESERVE() + hookV2.MIN_LEG_GAS(), "the plan precheck holds the maximum");
+        // Just under the gate: every slot is SKIP_GAS and the pool-only swap passes.
+        _joinM(keyV2, makers[0], 100_000e18, 100_000e6, _p());
+        (bool ok2, ConfluenceHook.Leg[] memory l2) = _swapAtGas(keyV2, true, amount, _hookPrecheck() - 1);
+        assertTrue(ok2, "the swap passes just under the precheck");
+        assertEq(_countStatus(l2, LegStatus.SKIP_GAS), 1, "the slot is SKIP_GAS just under the precheck");
     }
 
     function test_V209_lensSize() public {

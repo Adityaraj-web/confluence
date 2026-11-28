@@ -48,9 +48,13 @@ library PlanCheck {
     // forge-lint: disable-next-line(unsafe-typecast)
     uint256 private constant _MAX_INT128 = uint256(uint128(type(int128).max));
 
-    /// @notice STUB (V2-11 red step).
-    function reserve(Plan memory) internal pure returns (uint256) {
-        return GAS_RESERVE;
+    /// @notice The gas the hook keeps back for the pool's own work after the legs (V2-11, lever 8): the pool may have
+    ///         to take the WHOLE amount (every leg failed), so `GAS_RESERVE` plus a step's worst case per step of the
+    ///         walk that covered the amount. A walk that did not cover it has unknown crossings: the stated maximum.
+    /// @dev The steps come from the splitter (the hook trusts its pool numbers, D-35; `check` bounds them).
+    function reserve(Plan memory p) internal pure returns (uint256) {
+        if (p.truncated & 1 != 0) return RESERVE_MAX;
+        return Math.min(GAS_RESERVE + STEP_GAS * (p.truncated >> 8), RESERVE_MAX);
     }
 
     /// @dev Calls the splitter with a gas cap (low-level, so malformed data cannot revert), then checks the plan.
@@ -69,7 +73,8 @@ library PlanCheck {
         bool exactIn
     ) internal view returns (uint8 code, Plan memory p) {
         uint256 g = gasleft();
-        if (g < GAS_RESERVE + MIN_LEG_GAS) return (LegStatus.SKIP_GAS, p);
+        // The pool's crossings are not known until the plan returns: keep back the stated maximum for it.
+        if (g < RESERVE_MAX + MIN_LEG_GAS) return (LegStatus.SKIP_GAS, p);
         // The two plan functions take the same arguments; only the selector differs.
         bytes memory data = abi.encodeWithSelector(
             exactIn ? ConfluenceSplitter.planExactIn.selector : ConfluenceSplitterOut.planExactOut.selector,
@@ -81,7 +86,7 @@ library PlanCheck {
             emaTickX
         );
         bytes memory ret = new bytes(PLAN_BYTES);
-        uint256 gasCap = Math.min(g - GAS_RESERVE, PLAN_GAS_CAP);
+        uint256 gasCap = Math.min(g - RESERVE_MAX, PLAN_GAS_CAP);
         uint256 len = PLAN_BYTES;
         bool ok;
         assembly ("memory-safe") {
@@ -128,11 +133,13 @@ library PlanCheck {
             sumOt += ot;
         }
         if (count == 0) return true;
+        // `truncated`: bit 0 the flag, bits 8 and up the steps; the reserve is only as good as a bounded step count.
+        if (p.truncated & 0xfe != 0 || p.truncated >> 8 > PoolVenue.MAX_TICK_STEPS) return false;
         if (count > MAX_LEGS || sumSp > amount || p.poolIn != amount - sumSp || sumOt > _MAX_INT128) return false;
         // forge-lint: disable-next-line(calls-loop)
         if ((exactIn ? sumSp : sumOt) > IERC20(tokenIn).balanceOf(address(poolManager))) return false;
         if (p.poolOut > _MAX_INT128 || p.poolOnlyOut > _MAX_INT128 || p.tail > _MAX_INT128) return false;
-        if (p.truncated != 0 && p.poolIn > p.walked) return false;
+        if (p.truncated & 1 != 0 && p.poolIn > p.walked) return false;
         if (exactIn) return p.poolOut + sumOt >= p.poolOnlyOut + p.tail;
         // Exact output: the walked segments must give the whole output (no estimate past the walk, D-36).
         return p.tail == 0 && p.walked >= amount && p.poolOut + sumOt <= p.poolOnlyOut;

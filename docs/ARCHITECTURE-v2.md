@@ -102,7 +102,7 @@ BandGuardV2 passes a fill only if:
 
 ## 6. Failure model
 
-Aqua can never make a swap fail. Every failure degrades to the pool.
+Aqua can never make a swap fail where the same swap with every leg skipped (the same hooked pool, pool-only) passes, if the pool's own path fits the walk bound (the walk covers the amount, at most `MAX_TICK_STEPS` steps). Past that bound the pool needs more gas than the hook can reserve for it, and a window of gas limits remains where the hooked swap reverts and pool-only passes; it is measured and pinned (D-40). Every failure of a leg degrades to the pool.
 
 | Failure | Hook action | Trader result |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ Aqua can never make a swap fail. Every failure degrades to the pool.
 | Maker curve outside band of snapshot | dropped | same |
 | Drift limit broken | dropped | same |
 | Pool walk reaches 8 ranges | keep that allocation | valid, slightly less optimal |
-| Too little gas left | skip all legs | pool-only |
+| Too little gas left (less than `RESERVE_MAX` + `MIN_LEG_GAS` at the plan, or less than the plan's reserve + `MIN_LEG_GAS` at a leg, D-40) | skip all legs / the leg | pool-only |
 | Splitter call fails, runs out of its gas cap, or returns a plan that fails a hook check | skip all legs (`SKIP_PLAN`) | pool-only |
 | Split would not beat pool-only (quoted), or the pool's share would pass a truncated walk | skip all legs (`SKIP_NOT_BETTER`) | pool-only |
 | Exact output the walked pool segments cannot give in full (a gap and the end of liquidity look the same, D-30) | skip all legs (`SKIP_NOT_BETTER`) | pool-only, which may be a partial fill (D-36 product gap) |
