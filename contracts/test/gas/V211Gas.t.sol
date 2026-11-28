@@ -14,6 +14,7 @@ import {PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 
 import {LegStatus, Plan} from "../../src/ConfluenceSplitter.sol";
 import {ConfluenceHook} from "../../src/ConfluenceHook.sol";
+import {ConfluenceLens} from "../../src/ConfluenceLens.sol";
 import {MakerVenue} from "../../src/libraries/MakerVenue.sol";
 import {PlanCheck} from "../../src/libraries/PlanCheck.sol";
 import {PoolVenue} from "../../src/libraries/PoolVenue.sol";
@@ -985,6 +986,114 @@ contract V211GasTest is SplitBase {
                     p.truncated & 1,
                     p.truncated >> 8
                 );
+            }
+        }
+    }
+
+    /// @dev Report: the hostile swaps' gas (burning guard on every leg; burning splitter), ample gas.
+    function test_V211_hostileReport() public {
+        uint256 base = vm.snapshotState();
+        for (uint256 m; m < 2; m++) {
+            for (uint256 v = 1; v <= 2; v++) {
+                vm.revertToState(base);
+                (PoolKey memory k, uint256 amount) = _fixture(3, m == 0);
+                if (v == 1) {
+                    vm.etch(_guard(), _burnerCode());
+                } else {
+                    vm.etch(address(splitter), _burnerCode());
+                    vm.etch(address(splitterOut), _burnerCode());
+                }
+                (uint256 gas_, uint256 filled) = _m11(k, true, m == 0, amount);
+                console2.log(
+                    string.concat(m == 0 ? "exact-in " : "exact-out ", v == 1 ? "burning guard" : "burning splitter"),
+                    gas_,
+                    filled
+                );
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------ ceilings (D-41)
+
+    /// @dev Each ceiling is the M11 value measured on this tree plus 5%, rounded up to 1,000. 6 makers, 3 legs, v1 pool:
+    ///      index = direction x 2 + mode (USDC in exact-in, USDC in exact-out, MUMB in exact-in, MUMB in exact-out).
+    function _honestCeil(uint256 d, uint256 m) internal pure returns (uint256) {
+        return [uint256(1_336_000), 1_324_000, 1_371_000, 1_356_000][d * 2 + m];
+    }
+
+    /// @dev The gapped pool, 3 legs, the large size (exact in 2,500 USDC, exact out 400 MUMB).
+    uint256 internal constant GAP_3L_IN_CEIL = 1_341_000;
+    uint256 internal constant GAP_3L_OUT_CEIL = 1_109_000;
+    /// @dev Burning guard on all 3 legs (each cut at `LEG_GAS_CAP`), exact in / exact out; burning splitter (cut at
+    ///      `PLAN_GAS_CAP`, then the pool alone).
+    uint256 internal constant BURN_GUARD_IN_CEIL = 2_927_000;
+    uint256 internal constant BURN_GUARD_OUT_CEIL = 2_913_000;
+    uint256 internal constant BURN_SPLITTER_CEIL = 2_066_000;
+    /// @dev The hook's own work on top of the caps (measured: a burning-guard swap less 3 x `LEG_GAS_CAP`, 866,907, plus 5%).
+    uint256 internal constant HOOK_WORK = 910_000;
+    uint256 internal constant EIP_7825_TX_CAP = 16_777_216;
+
+    /// @dev The worst honest swap (6 makers, 3 legs, both modes, both directions; the gapped pool with 3 legs at the
+    ///      large size) is within its ceiling; the worst hostile swaps are within theirs and under the analytic bound
+    ///      `PLAN_GAS_CAP + 3 x LEG_GAS_CAP + hook work`, which is under the EIP-7825 transaction cap.
+    function test_V211_worstCaseBelowCeiling() public {
+        _initExact(keyV2);
+        bn0 = block.number;
+        ts0 = block.timestamp;
+        _makers(6);
+        uint256 base = vm.snapshotState();
+        for (uint256 d; d < 2; d++) {
+            for (uint256 m; m < 2; m++) {
+                vm.revertToState(base);
+                (uint256 g, uint256 f) = _m11(keyV2, d == 0, m == 0, _amount(d == 0, m == 0));
+                assertEq(f, 3, "three legs fill");
+                assertLe(g, _honestCeil(d, m), "honest worst case within its ceiling");
+            }
+        }
+        // The analytic hostile bound.
+        uint256 bound = PlanCheck.PLAN_GAS_CAP + 3 * PlanCheck.LEG_GAS_CAP + HOOK_WORK;
+        assertLt(bound, EIP_7825_TX_CAP, "under the EIP-7825 transaction gas cap");
+        for (uint256 m; m < 2; m++) {
+            vm.revertToState(base);
+            vm.etch(_guard(), _burnerCode());
+            (uint256 g, uint256 f) = _m11(keyV2, true, m == 0, _amount(true, m == 0));
+            assertEq(f, 0, "burning legs never fill");
+            assertLe(g, m == 0 ? BURN_GUARD_IN_CEIL : BURN_GUARD_OUT_CEIL, "burning guard within its ceiling");
+            assertLe(g, bound, "burning guard under the analytic bound");
+            vm.revertToState(base);
+            vm.etch(address(splitter), _burnerCode());
+            vm.etch(address(splitterOut), _burnerCode());
+            (g, f) = _m11(keyV2, true, m == 0, _amount(true, m == 0));
+            assertEq(f, 0, "a burning splitter never fills");
+            assertLe(g, BURN_SPLITTER_CEIL, "burning splitter within its ceiling");
+            assertLe(g, bound, "burning splitter under the analytic bound");
+        }
+        vm.revertToState(base);
+        for (uint256 m; m < 2; m++) {
+            uint256 s = vm.snapshotState();
+            (uint256 g,) = _scenario(3, 2, m == 0);
+            assertLe(g, m == 0 ? GAP_3L_IN_CEIL : GAP_3L_OUT_CEIL, "gapped pool, 3 legs, large");
+            vm.revertToState(s);
+        }
+    }
+
+    /// @dev A swap sent with the Lens's `minHookGas` plus the pool's share fills every planned leg, never SKIP_GAS.
+    function test_V211_noLegSkipGasAtMinHookGas() public {
+        ConfluenceLens lens = new ConfluenceLens();
+        uint256 base = vm.snapshotState();
+        for (uint256 id; id < FIXTURES; id++) {
+            for (uint256 m; m < 2; m++) {
+                vm.revertToState(base);
+                (PoolKey memory k, uint256 amount) = _fixture(id, m == 0);
+                ConfluenceLens.Breakdown memory q = lens.quote(k, true, m == 0 ? -int256(amount) : int256(amount));
+                uint256 planned;
+                for (uint256 i; i < q.legs.length; i++) {
+                    if (q.legs[i].amountIn > 0) planned++;
+                }
+                if (planned == 0) continue;
+                (bool ok,, uint256 filled) = _probe(k, q.minHookGas + 300_000, m == 0, amount);
+                assertTrue(ok, "the swap passes at minHookGas + the pool's share");
+                assertEq(filled, planned, string.concat("fixture ", vm.toString(id), ": every planned leg fills"));
             }
         }
     }

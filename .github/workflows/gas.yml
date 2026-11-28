@@ -1,0 +1,70 @@
+# V2-11: fails a push to main or a pull request when the gas of the V2-11 scenarios moves by more than 5% from the
+# committed contracts/.gas-snapshot. Only this check runs here (not the full suite, not the fuzz tests).
+#
+# Secret: the repository owner adds MAINNET_RPC_URL (a separate archive-node key used only by CI). No URL or key is in
+# the repo. Without the secret (a pull request from a fork, or before it is added) the job says so and passes
+# without running: a skipped check is visible in the log and in the job summary.
+name: gas
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MAINNET_RPC_URL: ${{ secrets.MAINNET_RPC_URL }}
+      # The scenarios: V2-11 snapshots and the worst-case ceiling. Fuzz tests are never in the snapshot, so the
+      # tolerance measures code changes, not random inputs.
+      GAS_MATCH: "test_V211_snap_|test_V211_worstCaseBelowCeiling"
+    steps:
+      - name: Is the RPC secret available?
+        id: secret
+        run: |
+          if [ -z "$MAINNET_RPC_URL" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::MAINNET_RPC_URL is not available to this run (a fork pull request, or the secret is not set). The gas check was SKIPPED, not passed."
+            echo "### gas check skipped: MAINNET_RPC_URL not available" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secret.outputs.present == 'true'
+        with:
+          submodules: recursive
+
+      - name: Read the pinned fork block (D-01)
+        if: steps.secret.outputs.present == 'true'
+        run: echo "FORK_BLOCK=$(grep '^FORK_BLOCK=' .env.example | cut -d= -f2)" >> "$GITHUB_ENV"
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        if: steps.secret.outputs.present == 'true'
+        with:
+          version: v1.8.7
+
+      # The fork's RPC cache: keyed on the pinned block, so a warm run reads the chain from disk.
+      - uses: actions/cache@v4
+        if: steps.secret.outputs.present == 'true'
+        with:
+          path: ~/.foundry/cache/rpc
+          key: foundry-rpc-${{ env.FORK_BLOCK }}
+
+      - name: Gas snapshot check (tolerance 5%)
+        if: steps.secret.outputs.present == 'true'
+        working-directory: contracts
+        run: |
+          forge snapshot --check --tolerance 5 \
+            --match-path "test/gas/V211Gas.t.sol" \
+            --match-test "$GAS_MATCH" \
+            --no-match-test "testFuzz"
